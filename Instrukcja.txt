@@ -1,0 +1,35 @@
+
+###
+ w paczce załącze też plik .env dla przykładu jak podpiąć skrypt do bota. (https://realpython.com/how-to-make-a-discord-bot-python/#creating-an-application)
+###
+Generalnie tworzysz aplikacje/bota, i tam będzie token publicKey i applicationID, jeśli się nie myle to tylko TOKEN jest potrzebny ale dla spokoju wypełnij sobie ten plik wszystkimi danymi do swojej aplikacji,
+chyba że chcesz to mogę ci przekazać już tego stworzonego "AlterBot"
+
+
+
+1. Instalacja pythona na swojej maszynie.  (https://realpython.com/installing-python/) na windowsie polecam przez windows store wersje 3.9
+
+2. Rozpakuj zip
+
+3. w konsoli przejdz do folderu gdzie rozpakowałeś pliki
+
+4. odpal "pip3 install -r requirements.txt"
+
+5. Jeśli wszystko zainstaluje się bez problemów(powinno) to python3 init.py
+
+6 bot powinien latać
+
+7. pod #help są komendy
+
+8. Jeśli chcesz mieć inny prefix do kommend to linijka 17 w init.pys
+
+
+Komendy do CMD:
+
+git add --all
+git commit -am ""
+git push heroku master
+git update-index --assume-unchanged lastKillInfo.txt
+git ls-files -v
+heroku logs
+heroku pg:killall
