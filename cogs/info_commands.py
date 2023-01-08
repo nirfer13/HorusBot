@@ -96,18 +96,6 @@ class info_commands(commands.Cog, name="info_commands"):
             await ctx.send("Varrakas został okrzyknięty fanem anime " + str(file_data[id]) + " razy. <:pepeYIKES:882183512092999680>")
 
 
-    # command to flex boss slayer
-    @commands.command(pass_context=True, name="flex", brief="Boss slayer flex")
-    async def flex(self, ctx):
-        my_role = discord.utils.get(ctx.guild.roles, id=686140153634488439)
-        if my_role in ctx.message.author.roles:
-            gif = "flexgifs/" + random.choice(os.listdir("flexgifs/"))
-            await ctx.channel.send(file=discord.File(gif))
-            await ctx.channel.send('Potężny <:GigaChad:970665721321381958> <@' + format(ctx.message.author.id) + '> napina swe sprężyste, naoliwione muskuły! Co za widok, robi wrażenie! <:pogu:882182966372106280>')
-        else:
-            await ctx.channel.send('<:KEKW:936907435921252363> **Miernota** <:2Head:882184634572627978>')
-
-
 
 def setup(bot):
     bot.add_cog(info_commands(bot))

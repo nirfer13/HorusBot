@@ -9,9 +9,8 @@ import discord
 from discord.ext import commands, tasks
 
 global AnnouceChannelID, CommandChannelID,  LogChannelID, HorusID, GuildID, SpamerID
-AnnouceChannelID = 1028340292895645696 #Debug
-#AnnouceChannelID = 776383677814669343
-#CommandChannelID = 1057198781206106153 #Debug
+#AnnouceChannelID = 1028340292895645696 #Debug
+AnnouceChannelID = 776383677814669343
 CommandChannelID = 776379796367212594
 LogChannelID = 1057198781206106153
 HorusID = 1004008220437778523
@@ -51,7 +50,18 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
 
     async def msg1(self, ctx):
         print("Loop check 1.")
-        await asyncio.sleep(60)
+        start = (dt.datetime.utcnow() + dt.timedelta(hours=2))
+        while(True):
+            timestamp = (dt.datetime.utcnow() + dt.timedelta(hours=2))
+            print(str(timestamp.strftime("%a %H:%M")))
+            if timestamp.strftime("%a %H:%M") == "Mon 18:00" and start != "Mon":
+                start = "Mon"
+                await self.show_weekly(ctx)
+                await self.clear_weekly(ctx)
+            elif timestamp.strftime("%a") != "Mon":
+                start = (dt.datetime.utcnow() + dt.timedelta(hours=2))
+
+            await asyncio.sleep(60)
 
     async def show_weekly(self, ctx):
         filename="weekly_ranking.json"
@@ -68,7 +78,7 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
             user = self.bot.get_user(int(Person[0]))
             if user:
                 if x==1:
-                    rankingString += str(x) + ". **<@" + str(user.id) + ">** - " + str(Person[1]) + " wiadomości - **zdobywa rangę <@&" + str(SpamerID) + ">**.\n"
+                    rankingString += str(x) + ". **<@" + str(user.id) + ">** - " + str(Person[1]) + " wiadomości - **zdobywa rangę <@&" + str(SpamerID) + ">** i może użyć komendy *$spamer*.\n"
                     my_role = discord.utils.get(ctx.guild.roles, id=SpamerID)
                     members = my_role.members
                     if members:
@@ -89,7 +99,8 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
         emb=discord.Embed(title='Ranking spamerów tygodnia!', description=rankingString, color=0x34C6EB)
         emb.set_image(url="https://www.altermmo.pl/wp-content/uploads/writingcat.gif")
         emb.set_footer(text='Piszcie dalej, niech klawiatury płoną!')
-        await ctx.send(embed=emb)
+        Channel = self.bot.get_channel(AnnouceChannelID)
+        await Channel.send(embed=emb)
 
     async def clear_weekly(self, ctx):
         filename="weekly_ranking.json"
@@ -153,9 +164,20 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
             pass
 
     @commands.command(name="weeklyranking")
+    @commands.has_permissions(administrator=True)
     async def weekly_ranking(self,ctx):
         await self.show_weekly(ctx)
         await self.clear_weekly(ctx)
+
+    @commands.command(name="spamer")
+    async def spamer(self,ctx):
+        my_role = discord.utils.get(ctx.guild.roles, id=SpamerID)
+        if my_role in ctx.message.author.roles:
+            gif = "flexgifs/" + random.choice(os.listdir("flexgifs/"))
+            await ctx.channel.send(file=discord.File(gif))
+            await ctx.channel.send('Tak, oto największy spammer tygodnia, czyli <@' + format(ctx.message.author.id) + '> <:Nerdge:984770661702578227>')
+        else:
+            await ctx.channel.send('Pfff, leszczyku discordowy, jak Ty nawet zdania sklecić nie umiesz... <:Pepega:936907616293093377>')
 
 
 
