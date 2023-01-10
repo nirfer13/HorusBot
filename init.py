@@ -25,7 +25,7 @@ async def on_command_error(self, ctx, exc):
 
 #loads cogs as extentions to bot
 if __name__ == '__main__':
-    for file in os.listdir(".\cogs"):
+    for file in os.listdir("/usr/local/bin/HorusBot/cogs"):
         if file.endswith(".py"):
             extension = file[:-3]
             try:

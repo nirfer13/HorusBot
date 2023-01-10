@@ -44,7 +44,7 @@ class voting(commands.Cog, name="voting"):
     async def emote_support(self, ctx, users: set, author: discord.User, success: bool):
     
         filename="emote_authors.json"
-        Channel = self.bot.get_channel(VoteChannelID)
+        Channel = self.bot.get_channel(CommandChannelID)
 
         with open(filename,'r+') as file:
             # First we load existing data into a dict.
@@ -140,7 +140,7 @@ class voting(commands.Cog, name="voting"):
             negReaction = 0
             try:
                 while (posReaction < votesReq and negReaction < votesReq):
-                        reaction, _ = await self.bot.wait_for("reaction_add", timeout=60*60*48, check=_check)
+                        reaction, _ = await self.bot.wait_for("reaction_add", timeout=60*60*24, check=_check)
                         posReaction = cache_msg.reactions[0].count
                         negReaction = cache_msg.reactions[1].count
                         print("Reactions: " + str(posReaction) + " " + str(negReaction))
@@ -157,6 +157,7 @@ class voting(commands.Cog, name="voting"):
                     await msg.delete()
                     image = await ctx.message.attachments[0].read()
                     await ctx.message.guild.create_custom_emoji(name = emotename, image = image)
+                    Channel = self.bot.get_channel(CommandChannelID)
                     await Channel.send("Emotka została dodana do serwera. Można ją wywołać wpisując \:" + str(emotename) + "\:")
                     await Channel.send(ctx.message.attachments[0].url)
                 
