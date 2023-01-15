@@ -30,7 +30,7 @@ VOTES = {
     "❌": 1
 }
 
-class voting(commands.Cog, name="voting"):
+class emote_voting(commands.Cog, name="emote_voting"):
     def __init__(self, bot):
         self.bot = bot
 
@@ -44,7 +44,7 @@ class voting(commands.Cog, name="voting"):
     async def emote_support(self, ctx, users: set, author: discord.User, success: bool):
     
         filename="emote_authors.json"
-        Channel = self.bot.get_channel(VoteChannelID)
+        Channel = self.bot.get_channel(CommandChannelID)
 
         with open(filename,'r+') as file:
             # First we load existing data into a dict.
@@ -106,71 +106,89 @@ class voting(commands.Cog, name="voting"):
                 and r.message.id == msg.id
             )
 
+        def isEnglish(s):
+            try:
+                s.encode(encoding='utf-8').decode('ascii')
+            except UnicodeDecodeError:
+                return False
+            else:
+                return True
+
         emojilist = []
         for emoji in ctx.guild.emojis:
             emojilist.append(emoji.name)
         
         color = 0x00BF28
-        if len(emotename) > 10:
+        if len(emotename) > 15:
             await ctx.send("<@" + str(ctx.author.id) + ">, za długa nazwa emotki. Wybierz coś krótszego, np. *$emotka \"Poggers\"*. Pamiętaj również, żeby wkleić emotkę w tej samej wiadomości! <:madge:882184635474386974>")
         elif len(emotename.split()) > 1:
             await ctx.send("<@" + str(ctx.author.id) + ">, nazwa emotki powinna być jednym słowem np. *$emotka \"Poggers\"*. Pamiętaj również, żeby wkleić emotkę w tej samej wiadomości! <:madge:882184635474386974>")
+        elif not isEnglish(emotename):
+            await ctx.send("<@" + str(ctx.author.id) + ">, nazwa emotki prawdopodobnie zawiera dziwne znaki np. polskie litery. Spóbuj jeszcze raz. <:madge:882184635474386974>")
         elif not emotename:
             await ctx.send("<@" + str(ctx.author.id) + ">, dodaj nazwę emotki w cudzysłowie np. *$emotka \"Poggers\"*. Pamiętaj również, żeby wkleić emotkę w tej samej wiadomości! <:madge:882184635474386974>")
         elif emotename in emojilist:
             await ctx.send("<@" + str(ctx.author.id) + ">, na tym serwerze istnieje już emotka o takiej nazwie. Sprawdź czy to nie ta sama. <:madge:882184635474386974>")
         elif ctx.message.attachments:
 
-            embed = discord.Embed(
-                title="Czy chcecie dodać emotkę do serwera?",
-                description=(f"\nPamiętacje, że emotki powinny być zgodne z zasadami Discorda. Sprawdźcie czy również taka emotka nie występuje już na serwerze."),
-                color=color,
-                timestamp=dt.datetime.utcnow()
-            )
-            embed.set_image(url=ctx.message.attachments[0].url)
-            embed.set_footer(text=f"Dodana przez {ctx.author.display_name}", icon_url=ctx.author.avatar_url)
-            Channel = self.bot.get_channel(VoteChannelID)
-            msg = await Channel.send(embed=embed)
-            cache_msg = discord.utils.get(self.bot.cached_messages, id=msg.id)
 
-            for emoji in list(VOTES.keys()):
-                await msg.add_reaction(emoji)
+            if ctx.message.attachments[0].content_type == "image/png" or ctx.message.attachments[0].content_type == "image/gif":
 
-            posReaction = 0
-            negReaction = 0
-            try:
-                while (posReaction < votesReq and negReaction < votesReq):
-                        reaction, _ = await self.bot.wait_for("reaction_add", timeout=60*60*48, check=_check)
-                        posReaction = cache_msg.reactions[0].count
-                        negReaction = cache_msg.reactions[1].count
-                        print("Reactions: " + str(posReaction) + " " + str(negReaction))
+                embed = discord.Embed(
+                    title="Czy chcecie dodać emotkę **" + emotename.upper() + "** do serwera?",
+                    description=(f"\nPamiętacje, że emotki powinny być zgodne z zasadami Discorda. Sprawdźcie czy również taka emotka nie występuje już na serwerze."),
+                    color=color,
+                    timestamp=dt.datetime.utcnow()
+                )
+                embed.set_image(url=ctx.message.attachments[0].url)
+                embed.set_footer(text=f"Dodana przez {ctx.author.display_name}", icon_url=ctx.author.avatar_url)
+                Channel = self.bot.get_channel(VoteChannelID)
+                msg = await Channel.send(embed=embed)
+                cache_msg = discord.utils.get(self.bot.cached_messages, id=msg.id)
 
-                if posReaction >= votesReq:
-                    print("Positive reactions won.")
-                    reactions = cache_msg.reactions[0]
+                for emoji in list(VOTES.keys()):
+                    await msg.add_reaction(emoji)
+
+                posReaction = 0
+                negReaction = 0
+                try:
+                    while (posReaction < votesReq and negReaction < votesReq):
+                            reaction, _ = await self.bot.wait_for("reaction_add", timeout=60*60*12, check=_check)
+                            posReaction = cache_msg.reactions[0].count
+                            negReaction = cache_msg.reactions[1].count
+                            print("Reactions: " + str(posReaction) + " " + str(negReaction))
+
+                    reactions1 = cache_msg.reactions[0]
+                    reactions2 = cache_msg.reactions[1]
                     reacters = set()
-                    print(reactions)
-                    async for user in reactions.users():
+                    async for user in reactions1.users():
                         reacters.add(user)
+                    async for user in reactions2.users():
+                        if user not in reacters:
+                            reacters.add(user)
+                        else:
+                            print("User duplicated.")
                     print(reacters)
-                    await self.emote_support(ctx, reacters, ctx.author, True)
-                    await msg.delete()
-                    image = await ctx.message.attachments[0].read()
-                    await ctx.message.guild.create_custom_emoji(name = emotename, image = image)
-                    await Channel.send("Emotka została dodana do serwera. Można ją wywołać wpisując \:" + str(emotename) + "\:")
-                    await Channel.send(ctx.message.attachments[0].url)
-                
-                else:
-                    print("Negative reactions won.")
-                    reactions = cache_msg.reactions[1]
-                    reacters = set()
-                    async for user in reactions.users():
-                        reacters.add(user)
-                    await self.emote_support(ctx, reacters, ctx.author, False)
-                    await msg.delete()
 
-            except asyncio.TimeoutError:
-                await msg.delete()
+                    if posReaction >= votesReq:
+                        print("Positive reactions won.")
+                        await self.emote_support(ctx, reacters, ctx.author, True)
+                        await msg.delete()
+                        image = await ctx.message.attachments[0].read()
+                        await ctx.message.guild.create_custom_emoji(name = emotename, image = image)
+                        Channel = self.bot.get_channel(CommandChannelID)
+                        await Channel.send("Emotka została dodana do serwera. Można ją wywołać wpisując \:" + str(emotename) + "\:")
+                        await Channel.send(ctx.message.attachments[0].url)
+                    
+                    else:
+                        print("Negative reactions won.")
+                        await self.emote_support(ctx, reacters, ctx.author, False)
+                        await msg.delete()
+
+                except asyncio.TimeoutError:
+                    await msg.delete()
+            else:
+                await ctx.send("<@" + str(ctx.author.id) + ">, zły format emotki. Możliwe formaty to .gif oraz .png. <:madge:882184635474386974>")
         else:
             await ctx.send("<@" + str(ctx.author.id) + ">, dodaj emotkę do wiadomości. <:madge:882184635474386974>")
 
@@ -185,4 +203,4 @@ class voting(commands.Cog, name="voting"):
 
 
 def setup(bot):
-    bot.add_cog(voting(bot))
+    bot.add_cog(emote_voting(bot))

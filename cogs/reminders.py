@@ -7,15 +7,13 @@ import os
 import discord
 from discord.ext import commands, tasks
 
-from cogs.messages_analysis import CommandChannelID
-from cogs.news import NewsChannelID
-
-global CommandChannelID, LogChannelID, VoteChannelID, RolesChannelID,HorusID, GuildID
+global CommandChannelID, LogChannelID, VoteChannelID, NewsChannelID, RolesChannelID, HorusID, GuildID
 CommandChannelID = 776379796367212594
 #CommandChannelID = 1028340292895645696 #Debug
 LogChannelID = 1057198781206106153
 VoteChannelID = 1059731255786229770
 #VoteChannelID = 1028340292895645696 #Debug
+NewsChannelID = 687199567669624873
 RolesChannelID = 688296443156365354
 HorusID = 1004008220437778523
 GuildID = 686137998177206281
@@ -58,8 +56,8 @@ class news(commands.Cog, name="news"):
             timestamp = (dt.datetime.utcnow() + dt.timedelta(hours=2))
             if timestamp.strftime("%a %H:%M") == "Sat 20:00" and start != "Sat":
                 start = "Sat"
-                Channel = self.bot.get_channel(VoteChannelID)
-                desc = "Żeby zaproponować nowe emotki na serwer lub nowe utwory dla Barda należy skorzystać z komend na kanale <#" + str(CommandChannelID) + ">:\n\n- **$emotka \"nazwa emotki\" oraz należy wkleić emotkę w tej samej wiadomości** - Zaproponuj dodanie emotki na serwer Discord,\n- **$fantasy \"tytuł utworu z YouTube\"** - Zaproponuj dodanie utworu do playlisty fantasy,\n- **$party \"tytuł utworu z YouTube\"** - Zaproponuj dodanie utworu do playlisty imprezowej.\n\nWszystkie pozostałe komendy znajdziesz w przypiętej wiadomości (pinezka w prawej górnej części Discorda) na kanale <#" + str(CommandChannelID) + ">\nNa kanale <#" + str(VoteChannelID) + ">, czyli tym tutaj, odbywają się tylko głosowania i nie można tu pisać.\nRangi, które możecie zdobyć, znajdziecie tutaj <#" + str(RolesChannelID) + ">."
+                Channel = self.bot.get_channel(CommandChannelID)
+                desc = "Żeby zaproponować nowe emotki na serwer lub nowe utwory dla Barda należy skorzystać z komend na kanale <#" + str(CommandChannelID) + ">:\n\n- **$emotka \"nazwa emotki\" oraz należy wkleić emotkę w tej samej wiadomości** - Zaproponuj dodanie emotki na serwer Discord,\n- **$fantasy \"tytuł utworu z YouTube\"** - Zaproponuj dodanie utworu do playlisty fantasy,\n- **$party \"tytuł utworu z YouTube\"** - Zaproponuj dodanie utworu do playlisty imprezowej.\n\nWszystkie pozostałe komendy znajdziesz w przypiętej wiadomości (pinezka w prawej górnej części Discorda) na kanale <#" + str(CommandChannelID) + ">\nNa kanale <#" + str(VoteChannelID) + "> odbywają się tylko głosowania i nie można tam pisać.\nRangi, które możecie zdobyć, znajdziecie tutaj <#" + str(RolesChannelID) + ">."
                 #Embed create   
                 emb=discord.Embed(title='Jak stworzyć pomysł?', description=desc, color=0x34C6EB)
                 emb.set_thumbnail(url="https://www.altermmo.pl/wp-content/uploads/monkaHmm.png")
