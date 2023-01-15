@@ -31,7 +31,7 @@ VOTES = {
     "❌": 1
 }
 
-class news(commands.Cog, name="news"):
+class reminders(commands.Cog, name="reminders"):
     def __init__(self, bot):
         self.bot = bot
 
@@ -111,5 +111,5 @@ class news(commands.Cog, name="news"):
             await asyncio.sleep(60)
 
 
-def setup(bot):
-    bot.add_cog(news(bot))
+async def setup(bot):
+    await bot.add_cog(reminders(bot))

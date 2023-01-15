@@ -201,6 +201,5 @@ class emote_voting(commands.Cog, name="emote_voting"):
             print("Invoke error.")
             await ctx.send("<@" + str(ctx.author.id) + "> Coś źle napisałeś. Żeby zaproponować emotkę wklej emotkę w wiadomości oraz podaj nazwę, pod którą będzie wywoływana np. *$emotka \"Poggers\"*. Pamiętaj o cudzysłowie przy nazwie. <:FeelsOkayMan:794117830822854656>")
 
-
 def setup(bot):
     bot.add_cog(emote_voting(bot))

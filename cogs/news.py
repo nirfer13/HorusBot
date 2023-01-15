@@ -143,5 +143,5 @@ class news(commands.Cog, name="news"):
                 emb.set_footer(text='Bardzo dziękuję za wkład w AlterMMO!')
                 await Channel.send(embed=emb)
 
-def setup(bot):
-    bot.add_cog(news(bot))
+async def setup(bot):
+    await bot.add_cog(news(bot))

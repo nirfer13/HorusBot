@@ -179,8 +179,5 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
         else:
             await ctx.channel.send('Pfff, leszczyku discordowy, jak Ty nawet zdania sklecić nie umiesz... <:Pepega:936907616293093377>')
 
-
-
-
-def setup(bot):
-    bot.add_cog(messages_analysis(bot))
+async def setup(bot):
+    await bot.add_cog(messages_analysis(bot))
