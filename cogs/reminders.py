@@ -111,5 +111,5 @@ class reminders(commands.Cog, name="reminders"):
             await asyncio.sleep(60)
 
 
-async def setup(bot):
-    await bot.add_cog(reminders(bot))
+def setup(bot):
+    bot.add_cog(reminders(bot))

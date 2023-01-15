@@ -97,5 +97,5 @@ class info_commands(commands.Cog, name="info_commands"):
 
 
 
-async def setup(bot):
-    await bot.add_cog(info_commands(bot))
+def setup(bot):
+    bot.add_cog(info_commands(bot))

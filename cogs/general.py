@@ -28,5 +28,5 @@ class general(commands.Cog, name="general"):
         print('Logged in as:  ', self.bot.user)
         print('ID:  ', self.bot.user.id)
 
-async def setup(bot):
-    await bot.add_cog(general(bot))
+def setup(bot):
+    bot.add_cog(general(bot))
