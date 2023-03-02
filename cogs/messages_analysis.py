@@ -53,13 +53,10 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
         start = (dt.datetime.utcnow() + dt.timedelta(hours=2))
         while(True):
             timestamp = (dt.datetime.utcnow() + dt.timedelta(hours=2))
-            print(str(timestamp.strftime("%a %H:%M")))
-            if timestamp.strftime("%a %H:%M") == "Mon 18:00" and start != "Mon":
-                start = "Mon"
+            #print(str(timestamp.strftime("%H:%M")))
+            if timestamp.strftime("%H:%M") == "20:00":
                 await self.show_weekly(ctx)
                 await self.clear_weekly(ctx)
-            elif timestamp.strftime("%a") != "Mon":
-                start = (dt.datetime.utcnow() + dt.timedelta(hours=2))
 
             await asyncio.sleep(60)
 
@@ -96,7 +93,7 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
                     break
 
         #Embed create   
-        emb=discord.Embed(title='Ranking spamerów tygodnia!', description=rankingString, color=0x34C6EB)
+        emb=discord.Embed(title='Ranking spamerów dnia!', description=rankingString, color=0x34C6EB)
         emb.set_image(url="https://www.altermmo.pl/wp-content/uploads/writingcat.gif")
         emb.set_footer(text='Piszcie dalej, niech klawiatury płoną!')
         Channel = self.bot.get_channel(AnnouceChannelID)
@@ -175,7 +172,7 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
         if my_role in ctx.message.author.roles:
             gif = "flexgifs/" + random.choice(os.listdir("flexgifs/"))
             await ctx.channel.send(file=discord.File(gif))
-            await ctx.channel.send('Tak, oto największy spammer tygodnia, czyli <@' + format(ctx.message.author.id) + '> <:Nerdge:984770661702578227>')
+            await ctx.channel.send('Tak, oto największy spammer, czyli <@' + format(ctx.message.author.id) + '> <:Nerdge:984770661702578227>')
         else:
             await ctx.channel.send('Pfff, leszczyku discordowy, jak Ty nawet zdania sklecić nie umiesz... <:Pepega:936907616293093377>')
 
