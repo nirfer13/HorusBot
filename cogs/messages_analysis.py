@@ -117,23 +117,24 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
         print("Message detected.")
 
         #ctx = await self.bot.get_context(ctx)
-        with open("weekly_ranking.json",'r+') as file:
+        if ctx.author.id != 859729615123251200 and ctx.author.id != 1004008220437778523 and ctx.author.id != 1061222744617922620:
+            with open("weekly_ranking.json",'r+') as file:
 
-            # First we load existing data into a dict.
-            file_data = json.load(file)
-           
-            id=str(ctx.author.id)
+                # First we load existing data into a dict.
+                file_data = json.load(file)
+            
+                id=str(ctx.author.id)
 
-            if id in file_data.keys():
-                file_data[id] += 1
-            else:
-                file_data[id] = 1
+                if id in file_data.keys():
+                    file_data[id] += 1
+                else:
+                    file_data[id] = 1
 
-            json_object = json.dumps(file_data, indent=4)
-            # Sets file's current position at offset.
-            file.seek(0)
-            file.truncate(0) # need '0' when using r+
-            file.write(json_object)
+                json_object = json.dumps(file_data, indent=4)
+                # Sets file's current position at offset.
+                file.seek(0)
+                file.truncate(0) # need '0' when using r+
+                file.write(json_object)
 
         if "anime" in (ctx.content).lower() and "varrakas" in (ctx.content).lower() and ctx.author.id != 1061222744617922620:
 
