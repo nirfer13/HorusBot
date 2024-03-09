@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "horus"
+version = "0.1.0"
+description = ""
+authors = ["nirfer13 <86719868+nirfer13@users.noreply.github.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "3.9.13"
+discord.py = "1.7.3"
+yarl="1.7.2"
+python-dotenv = "0.18.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
