@@ -60,34 +60,42 @@ class news(commands.Cog, name="news"):
                 #News Verification
                 if ctx.content in contentList:
                     await Channel.send("<@" + str(ctx.author.id) + ">, nie duplikuj newsów...")
+                    await Channel.send(ctx.content)
                     await ctx.delete()
                 elif len(title) < 10 or len(title) > 70:
                     await Channel.send("<@" + str(ctx.author.id) + ">, tytuł newsa powinien zawierać od 10 do 70 znaków. Spróbuj ponownie.")
+                    await Channel.send(ctx.content)
                     await ctx.delete()                
                 elif not(enter1 == "\n" or enter1 == ""):
                     print(enter1)
                     await Channel.send("<@" + str(ctx.author.id) + ">, tytuł newsa oddziel od treści pustą linią. Możesz to zrobić wciskając Shift + Enter. Przykład poniżej.")
                     await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
+                    await Channel.send(ctx.content)
                     await ctx.delete()
                 elif len(desc) < 150:
                     await Channel.send("<@" + str(ctx.author.id) + ">, za krótki opis newsa. Powinien mieć co najmniej 150 znaków.")
+                    await Channel.send(ctx.content)
                     await ctx.delete()
                 elif len(desc) > 750:
                     await Channel.send("<@" + str(ctx.author.id) + ">, za długi opis newsa. Powinien mieć maksymalnie 750 znaków.")
+                    await Channel.send(ctx.content)
                     await ctx.delete()
                 elif not(enter2 == "\n" or enter1 == ""):
                     await Channel.send("<@" + str(ctx.author.id) + ">, treść newsa oddziel od linku do źródła pustą linią. Możesz to zrobić wciskając Shift + Enter. Przykład poniżej.")
                     await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
+                    await Channel.send(ctx.content)
                     await ctx.delete()
                 elif "https://" not in url:
                     await Channel.send("<@" + str(ctx.author.id) + ">, w ostatniej linii podaj link do źródła newsa zaczynający się od *https://...*")
                     await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
+                    await Channel.send(ctx.content)
                     await ctx.delete()
                 else:
                     await self.news_support(ctx, ctx.author)
             except:
                 await Channel.send("<@" + str(ctx.author.id) + ">, upewnij się, że news ma odpowiednią strukturę. Powinno to wyglądać tak jak poniżej. Puste linie możesz dodawać wciskając SHIFT + ENTER.")
                 await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
+                await Channel.send(ctx.content)
                 await ctx.delete()
 
     async def news_support(self, ctx, author: discord.User):
