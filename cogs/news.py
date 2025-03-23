@@ -28,79 +28,65 @@ VOTES = {
     "❌": 1
 }
 
+
+
+
 class news(commands.Cog, name="news"):
     def __init__(self, bot):
         self.bot = bot
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Bot ready...")
+        print("News module ready...")
+        self.seen_links = []
+        self.current_link = None
+
+        Channel = self.bot.get_channel(CommandChannelID)
+        oldMsg = self.bot.get_channel(NewsChannelID).history(limit=10)
+        oldMsg = await oldMsg.flatten()
+
+        for msg in oldMsg[1:]:
+            result = self.contains_link(msg.content)
+            self.seen_links.append(self.current_link)
+
+    def contains_link(self, text):
+        # Wyrażenie regularne do wykrywania linków
+        url_pattern = re.compile(r'https?://\S+|www\.\S+')
+        match = url_pattern.search(text)
+
+        if match:
+            self.current_link = match.group().rstrip('\/')
+            return True
+        return False
+
+    def duplicate_link(self):
+        if self.current_link not in self.seen_links:
+            self.seen_links.append(self.current_link)
+            return True
+        return False
 
     @commands.Cog.listener()
     async def on_message(self, ctx):
-        if ctx.channel.id == NewsChannelID and ctx.author.id != 291836779495948288 and ctx.author.id != HorusID:
+        if ctx.channel.id == NewsChannelID and ctx.author.id != 2918367794959482880 and ctx.author.id != HorusID:
             print("News detected.")
-
-            listContent = (ctx.content).split("\n")
-            Channel = self.bot.get_channel(CommandChannelID)
-            oldMsg = self.bot.get_channel(NewsChannelID).history(limit=10)
-            oldMsg = await oldMsg.flatten()
-
-            contentList = []
-            for msg in oldMsg[1:]:
-                contentList.append(msg.content)
-
+    
             try:
-                title = listContent[0]
-                enter1 = listContent[1]
-                desc = listContent[2]
-                enter2 = listContent[3]
-                url = listContent[4]
+                Channel = self.bot.get_channel(CommandChannelID)
 
                 #News Verification
-                if ctx.content in contentList:
-                    await Channel.send("<@" + str(ctx.author.id) + ">, nie duplikuj newsów...")
+                if not self.contains_link(ctx.content):
+                    await Channel.send("<@" + str(ctx.author.id) + ">, upewnij się, że załączyłeś linka w pełnej formie.")
                     await Channel.send(ctx.content)
                     await ctx.delete()
-                elif len(listContent) > 5:
-                    await Channel.send("<@" + str(ctx.author.id) + ">, w newsie mają znajdować się tylko 3 akapity! Tak jak poniżej:")
-                    await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
-                    await Channel.send(ctx.content)
-                    await ctx.delete()
-                elif len(title) < 10 or len(title) > 70:
-                    await Channel.send("<@" + str(ctx.author.id) + ">, tytuł newsa powinien zawierać od 10 do 70 znaków. Spróbuj ponownie.")
-                    await Channel.send(ctx.content)
-                    await ctx.delete()
-                elif not(enter1 == "\n" or enter1 == ""):
-                    print(enter1)
-                    await Channel.send("<@" + str(ctx.author.id) + ">, tytuł newsa oddziel od treści pustą linią. Możesz to zrobić wciskając Shift + Enter. Przykład poniżej.")
-                    await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
-                    await Channel.send(ctx.content)
-                    await ctx.delete()
-                elif len(desc) < 150:
-                    await Channel.send("<@" + str(ctx.author.id) + ">, za krótki opis newsa. Powinien mieć co najmniej 150 znaków.")
-                    await Channel.send(ctx.content)
-                    await ctx.delete()
-                elif len(desc) > 750:
-                    await Channel.send("<@" + str(ctx.author.id) + ">, za długi opis newsa. Powinien mieć maksymalnie 750 znaków.")
-                    await Channel.send(ctx.content)
-                    await ctx.delete()
-                elif not(enter2 == "\n" or enter1 == ""):
-                    await Channel.send("<@" + str(ctx.author.id) + ">, treść newsa oddziel od linku do źródła pustą linią. Możesz to zrobić wciskając Shift + Enter. Przykład poniżej.")
-                    await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
-                    await Channel.send(ctx.content)
-                    await ctx.delete()
-                elif "https://" not in url:
-                    await Channel.send("<@" + str(ctx.author.id) + ">, w ostatniej linii podaj link do źródła newsa zaczynający się od *https://...*")
-                    await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
+                elif not self.duplicate_link():
+                    await Channel.send("<@" + str(ctx.author.id) + ">, nie duplikuj linków.")
                     await Channel.send(ctx.content)
                     await ctx.delete()
 
                 else:
                     await self.news_support(ctx, ctx.author)
             except:
-                await Channel.send("<@" + str(ctx.author.id) + ">, upewnij się, że news ma odpowiednią strukturę. Powinno to wyglądać tak jak poniżej. Puste linie możesz dodawać wciskając SHIFT + ENTER.")
-                await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
+                await Channel.send("<@" + str(ctx.author.id) + ">, upewnij się, że załączyłeś linka w pełnej formie.")
                 await Channel.send(ctx.content)
                 await ctx.delete()
 
@@ -115,9 +101,9 @@ class news(commands.Cog, name="news"):
 
             id = str(author.id)
             if id in file_data.keys():
-                file_data[id] += 1
+                file_data[id] += 0.25
             else:
-                file_data[id] = 1
+                file_data[id] = 0.25
 
             json_object = json.dumps(file_data, indent=4)
             # Sets file's current position at offset.
@@ -150,7 +136,7 @@ class news(commands.Cog, name="news"):
     async def news_format(self, ctx):
                 await ctx.message.delete()
                 Channel = self.bot.get_channel(NewsChannelID)
-                desc = "Kanał poświęcony nowinkom ze świata gier online. Każdy news jest weryfikowany przed bota, a później administrację. Jeśli będziesz dodawał poprawne newsy, to z czasem dostaniesz specjalne rangi, które zwiększą szanse na wygraną w giveawayu. **Skup się na logicznej treści i poprawnej ortografii oraz interpunkcji.** \n\nFormat newsa powinnien wyglądać następująco:\n\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`"
+                desc = "Kanał poświęcony nowinkom ze świata gier online. Każdy news jest weryfikowany przed bota, a później administrację. Jeśli będziesz dodawał poprawne newsy, to z czasem dostaniesz specjalne rangi, które zwiększą szanse na wygraną w giveawayu. **Skup się na logicznej treści i poprawnej ortografii oraz interpunkcji.** \n\nNews powinien zawierać link do źródła (https://...)`"
                 #Embed create   
                 emb=discord.Embed(title='Jak pisać newsy?', description=desc, color=0x34C6EB)
                 emb.set_thumbnail(url="https://www.altermmo.pl/wp-content/uploads/peepoG.png")

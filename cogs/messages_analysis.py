@@ -53,10 +53,11 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
         start = (dt.datetime.utcnow() + dt.timedelta(hours=2))
         while(True):
             timestamp = (dt.datetime.utcnow() + dt.timedelta(hours=2))
-            #print(str(timestamp.strftime("%H:%M")))
+            print(str(timestamp.strftime("%H:%M")))
             if timestamp.strftime("%H:%M") == "20:00":
                 await self.show_weekly(ctx)
                 await self.clear_weekly(ctx)
+                await asyncio.sleep(600)
 
             await asyncio.sleep(60)
 
