@@ -62,6 +62,11 @@ class news(commands.Cog, name="news"):
                     await Channel.send("<@" + str(ctx.author.id) + ">, nie duplikuj newsów...")
                     await Channel.send(ctx.content)
                     await ctx.delete()
+                elif len(listContent) > 5:
+                    await Channel.send("<@" + str(ctx.author.id) + ">, w newsie mają znajdować się tylko 3 akapity! Tak jak poniżej:")
+                    await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
+                    await Channel.send(ctx.content)
+                    await ctx.delete()
                 elif len(title) < 10 or len(title) > 70:
                     await Channel.send("<@" + str(ctx.author.id) + ">, tytuł newsa powinien zawierać od 10 do 70 znaków. Spróbuj ponownie.")
                     await Channel.send(ctx.content)
@@ -87,11 +92,6 @@ class news(commands.Cog, name="news"):
                     await ctx.delete()
                 elif "https://" not in url:
                     await Channel.send("<@" + str(ctx.author.id) + ">, w ostatniej linii podaj link do źródła newsa zaczynający się od *https://...*")
-                    await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
-                    await Channel.send(ctx.content)
-                    await ctx.delete()
-                elif len(listContent) > 5:
-                    await Channel.send("<@" + str(ctx.author.id) + ">, w newsie mają znajdować się tylko 3 akapity! Tak jak poniżej:")
                     await Channel.send("\n`Tytuł newsa (od 10 do 70 znaków)\n\nTreść newsa (od 150 do 700 znaków)\n\nLink do źródła (https://...)`")
                     await Channel.send(ctx.content)
                     await ctx.delete()
