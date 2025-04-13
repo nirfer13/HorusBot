@@ -42,7 +42,7 @@ class news(commands.Cog, name="news"):
         self.current_link = None
 
         Channel = self.bot.get_channel(CommandChannelID)
-        oldMsg = self.bot.get_channel(NewsChannelID).history(limit=10)
+        oldMsg = self.bot.get_channel(NewsChannelID).history(limit=20)
         oldMsg = await oldMsg.flatten()
 
         for msg in oldMsg[1:]:
@@ -84,6 +84,7 @@ class news(commands.Cog, name="news"):
                     await ctx.delete()
 
                 else:
+                    await ctx.add_reaction("🆕")
                     await self.news_support(ctx, ctx.author)
             except:
                 await Channel.send("<@" + str(ctx.author.id) + ">, upewnij się, że załączyłeś linka w pełnej formie.")
@@ -115,7 +116,7 @@ class news(commands.Cog, name="news"):
             role2 = discord.utils.get(ctx.guild.roles, id=1061601744754327672) #Pismak
             role3 = discord.utils.get(ctx.guild.roles, id=1061601741470175302) #Dziennikarz
 
-            await Channel.send("<@" + str(ctx.author.id) + ">, brawo! Udało Ci się poprawnie dodać newsa! <a:PepoG:936907752155021342> Masz już " + str(file_data[id]) + " poprawnych newsów na koncie.")
+            await Channel.send(str(ctx.author.name) + ", brawo! Udało Ci się poprawnie dodać newsa! <a:PepoG:936907752155021342> Masz już " + str(file_data[id]) + " poprawnych newsów na koncie.")
 
             id = str(author.id)
             if id in file_data.keys() and author.id != 1061222744617922620:
