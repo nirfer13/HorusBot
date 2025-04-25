@@ -94,11 +94,11 @@ class reminders(commands.Cog, name="reminders"):
         start = (dt.datetime.utcnow() + dt.timedelta(hours=2))
         while(True):
             timestamp = (dt.datetime.utcnow() + dt.timedelta(hours=2))
-            if timestamp.strftime("%a %H:%M") == "Thu 20:00" and start != "Thu":
+            if timestamp.strftime("%a %H:%M") == "Thu 20:05" and start != "Thu":
                 start = "Thu"
                 Channel = self.bot.get_channel(NewsChannelID)
                 desc = "Kanał poświęcony nowinkom ze świata gier online. Każdy news jest weryfikowany przed bota, a później administrację. Jeśli będziesz dodawał poprawne newsy, to z czasem dostaniesz specjalne rangi, które zwiększą szanse na wygraną w giveawayu. \n\nNews musi zawierać linka do źródła (https://...)`"
-                await Channel.send("")
+
                 #Embed create   
                 emb=discord.Embed(title='Jak pisać newsy?', description=desc, color=0x34C6EB)
                 emb.set_thumbnail(url="https://www.altermmo.pl/wp-content/uploads/peepoG.png")
