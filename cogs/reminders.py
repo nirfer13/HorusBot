@@ -41,13 +41,19 @@ class reminders(commands.Cog, name="reminders"):
 
         #function to get context
         channel = self.bot.get_channel(LogChannelID)
-        msg = await channel.fetch_message(1057204065706188820)
+
+
+        msg = await channel.send("🔧 Przygotowuję kontekst...")
         ctx = await self.bot.get_context(msg)
+        await msg.delete()
+
+        # msg = await channel.fetch_message(1396072517361340489)
+        # ctx = await self.bot.get_context(msg)
 
         self.task1 = self.bot.loop.create_task(self.vote_reminder(ctx))
         self.task2 = self.bot.loop.create_task(self.command_reminder(ctx))
         self.task3 = self.bot.loop.create_task(self.news_reminder(ctx))
-        print("Reminder tasks started.")     
+        print("Reminder tasks started.")   
 
     async def vote_reminder(self, ctx):
         print("Vote reminder task started.")

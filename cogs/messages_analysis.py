@@ -40,8 +40,13 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
 
         #function to get context
         channel = self.bot.get_channel(LogChannelID)
-        msg = await channel.fetch_message(1057204065706188820)
+
+        # msg = await channel.fetch_message(1396072517361340489)
+        # ctx = await self.bot.get_context(msg)
+
+        msg = await channel.send("🔧 Przygotowuję kontekst...")
         ctx = await self.bot.get_context(msg)
+        await msg.delete()
         await ctx.send("Horus gotowy do szpiegowania.")
 
         self.task = self.bot.loop.create_task(self.msg1(ctx))
@@ -53,7 +58,7 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
         start = (dt.datetime.utcnow() + dt.timedelta(hours=2))
         while(True):
             timestamp = (dt.datetime.utcnow() + dt.timedelta(hours=2))
-            print(str(timestamp.strftime("%H:%M")))
+
             if timestamp.strftime("%H:%M") == "20:00":
                 await self.show_weekly(ctx)
                 await self.clear_weekly(ctx)
