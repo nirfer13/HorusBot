@@ -1,5 +1,4 @@
 import asyncio
-import discord
 
 from datetime import datetime, timedelta
 from discord.ext import commands
@@ -13,7 +12,9 @@ class twitch_sync(commands.Cog, name="twitch_sync"):
     async def on_ready(self):
         print("Twitch sync ready...")
 
-    async def twitch_sync(self, ctx):
+        self.task = self.bot.loop.create_task(self.twitch_sync())
+
+    async def twitch_sync(self):
         last_checked_date = None
 
         print("Twitch sync loop started")
