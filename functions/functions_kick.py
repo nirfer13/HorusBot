@@ -1,84 +1,141 @@
 # functions_kick.py
-"""Kick integration: assigns Discord roles from Kick data (messages, VIP/MOD)."""
+# -*- coding: utf-8 -*-
+"""Kick integration: assigns Discord roles from Kick data (messages, VIP/MOD).
+   Thresholds, guild_id and channel_id are loaded from a key=value file.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
 
 import discord
 from discord.ext import commands
-from typing import Dict, List, Tuple, Optional
-from pathlib import Path
 
 from globals.globalvariables import DebugMode
 
 
-# ---------- Roles config loader (Kick) ----------
+# ---------- Roles & config loader (Kick) ----------
 
 class RolesConfigKick:
     """
-    Loads Kick-specific Discord role IDs from a text file (key=value).
-    Uses keys:
-      - KICK_MESSAGER_TIER_1..5
+    Loads Kick-specific Discord settings from a text file (key=value).
+    Supported keys (all optional, but role IDs you use must exist in Discord):
+      - KICK_MESSAGER_TIER_1..5     (role IDs for tiers)
       - KICK_VIP_ROLE, KICK_MOD_ROLE
+      - KICK_MSG_THRESHOLDS         (CSV of 5 increasing ints; default: 1000,3600,7500,15000,30000)
+      - GUILD_ID                    (Discord guild id)
+      - CHANNEL_ANNOUNCE_ID         (target channel id for announcements)
+      - CHANNEL_ANNOUNCE_ID_DEBUG   (optional separate channel id in DebugMode)
     """
 
     def __init__(self, path: Optional[Path] = None) -> None:
         self.path = path or Path(__file__).with_name("discord_roles.txt")
-        self._raw: Dict[str, int] = {}
+        self._raw: Dict[str, str] = {}
+
+        # Parsed fields
         self.messager_tiers: List[int] = []
         self.vip_role_id: int = 0
         self.mod_role_id: int = 0
+
+        self.msg_thresholds: List[int] = []
+
+        self.guild_id: int = 0
+        self.channel_announce_id: int = 0
+        self.channel_announce_id_debug: int = 0
+
         self.reload()
 
     def reload(self) -> None:
         self._raw = {}
         if not self.path.exists():
-            print(f"[RolesConfigKick] File not found at {self.path}. Using empty defaults.")
+            print(f"[RolesConfigKick] File not found at {self.path}. Using defaults.")
             self._apply()
             return
 
         for line in self.path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if not line or line.startswith("#") or line.startswith(";"):
-                continue
-            if "=" not in line:
+            if not line or line.startswith("#") or line.startswith(";") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            try:
-                self._raw[k.strip().upper()] = int(v.strip())
-            except ValueError:
-                print(f"[RolesConfigKick] Non-integer for {k}: {v}")
+            self._raw[k.strip().upper()] = v.strip()
 
         self._apply()
 
-    def _apply(self) -> None:
-        self.messager_tiers = [self._raw.get(f"KICK_MESSAGER_TIER_{i}") for i in range(1, 6)]
-        self.messager_tiers = [rid for rid in self.messager_tiers if isinstance(rid, int)]
+    # ---- helpers ----
+    @staticmethod
+    def _parse_int(value: str, default: int = 0) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
 
-        self.vip_role_id = int(self._raw.get("KICK_VIP_ROLE", 0))
-        self.mod_role_id = int(self._raw.get("KICK_MOD_ROLE", 0))
+    @staticmethod
+    def _parse_int_list(value: str, expected_len: int, default: List[int]) -> List[int]:
+        if not value:
+            return list(default)
+        parts = [p.strip() for p in re.split(r"[,\s;]+", value) if p.strip()]
+        out: List[int] = []
+        for p in parts[:expected_len]:
+            try:
+                out.append(int(p))
+            except Exception:
+                pass
+        # pad/trim
+        if not out:
+            return list(default)
+        if len(out) < expected_len:
+            out += default[len(out):expected_len]
+        else:
+            out = out[:expected_len]
+        return out
+
+    def _apply(self) -> None:
+        # Role IDs
+        tiers: List[int] = []
+        for i in range(1, 6):
+            raw = self._raw.get(f"KICK_MESSAGER_TIER_{i}", "")
+            rid = self._parse_int(raw, 0)
+            if rid:
+                tiers.append(rid)
+        self.messager_tiers = tiers[:5]
+
+        self.vip_role_id = self._parse_int(self._raw.get("KICK_VIP_ROLE", "0"), 0)
+        self.mod_role_id = self._parse_int(self._raw.get("KICK_MOD_ROLE", "0"), 0)
+
+        # Thresholds for messages (defaults same jak u Ciebie)
+        default_msg = [1000, 3600, 7500, 15000, 30000]
+        self.msg_thresholds = self._parse_int_list(self._raw.get("KICK_MSG_THRESHOLDS", ""), 5, default_msg)
+
+        # Discord IDs
+        self.guild_id = self._parse_int(self._raw.get("GUILD_ID", "0"), 0)
+        self.channel_announce_id = self._parse_int(self._raw.get("CHANNEL_ANNOUNCE_ID", "0"), 0)
+        self.channel_announce_id_debug = self._parse_int(self._raw.get("CHANNEL_ANNOUNCE_ID_DEBUG", "0"), 0)
 
 
 # ---------- Helpers ----------
 
-def get_kick_messager_role(messages: int, messager_tier_ids: List[int]) -> Tuple[int, List[int]]:
-    # thresholds in messages: [1000,3600), [3600,7500), [7500,15000), [15000,30000), [30000,∞)
-    tiers = (messager_tier_ids + [0, 0, 0, 0, 0])[:5]
+def _tier_for_messages(messages: int, thresholds: List[int]) -> int:
+    """
+    Return tier index [0..4] by messages only.
+    Greedy highest tier whose threshold <= messages. If none -> -1.
+    """
+    best = -1
+    for idx, th in enumerate(thresholds[:5]):
+        if messages >= th:
+            best = idx
+    return best
 
-    if 1000 <= messages < 3600:
-        role_id = tiers[0]
-    elif 3600 <= messages < 7500:
-        role_id = tiers[1]
-    elif 7500 <= messages < 15000:
-        role_id = tiers[2]
-    elif 15000 <= messages < 30000:
-        role_id = tiers[3]
-    elif messages >= 30000:
-        role_id = tiers[4]
-    else:
-        role_id = 0
 
-    roles_to_remove = [rid for rid in tiers if rid]
-    if role_id in roles_to_remove:
-        roles_to_remove.remove(role_id)
-    return role_id, roles_to_remove
+def _roles_to_remove(keep_role_id: int, messager_role_ids: List[int]) -> List[int]:
+    r = [rid for rid in messager_role_ids if rid]
+    if keep_role_id in r:
+        try:
+            r.remove(keep_role_id)
+        except ValueError:
+            pass
+    return r
 
 
 # ---------- Cog ----------
@@ -99,50 +156,75 @@ class FunctionsKick(commands.Cog, name="FunctionsKick"):
         print("Table discord_kick created successfully.")
 
     async def assign_roles_messages(self):
-        """Assign Discord roles to users based on message count stored for Kick."""
+        """
+        Assign Discord roles to users based on message count stored for Kick.
+        Uses per-tier message thresholds from config.
+        """
         db_rows = await self.bot.pg_con.fetch("""
-            SELECT discord_id, chtr_comments, chtr_isvip, chtr_ismod 
-            FROM chatters_information_kick 
-            WHERE chtr_comments > 299 AND discord_id IS NOT NULL
+            SELECT discord_id, chtr_comments
+            FROM chatters_information_kick
+            WHERE chtr_comments >= 1 AND discord_id IS NOT NULL
         """)
 
-        guild = self.bot.get_guild(686137998177206281)
+        # Guild & announce channel
+        guild_id = self.roles.guild_id or 686137998177206281
+        guild = self.bot.get_guild(int(guild_id))
         if guild is None:
             print("Guild not found.")
             return
 
+        if DebugMode and self.roles.channel_announce_id_debug:
+            channel_id = self.roles.channel_announce_id_debug
+        else:
+            channel_id = self.roles.channel_announce_id or (881090112576962560 if DebugMode else 776379796367212594)
+        chat_channel = self.bot.get_channel(int(channel_id)) if channel_id else None
+
         guild_members = {m.id: m for m in guild.members}
         all_roles = {r.id: r for r in guild.roles}
-        chat_channel = self.bot.get_channel(881090112576962560 if DebugMode else 776379796367212594)
 
-        user_best: Dict[int, int] = {}
-        for user_id, messages, _vip, _mod in db_rows:
-            if user_id in user_best and messages < user_best[user_id]:
-                continue
-            user_best[user_id] = messages
+        # pick best messages per discord_id if duplicates exist
+        best: Dict[int, int] = {}
+        for user_id, messages in db_rows:
+            curr = int(messages or 0)
+            prev = best.get(user_id, 0)
+            if curr > prev:
+                best[user_id] = curr
 
-        for user_id, messages in user_best.items():
+        tiers = (self.roles.messager_tiers + [0, 0, 0, 0, 0])[:5]
+
+        for user_id, messages in best.items():
             member = guild_members.get(int(user_id))
             if not member:
                 continue
 
-            role_id, roles_to_remove = get_kick_messager_role(messages, self.roles.messager_tiers)
+            tier_idx = _tier_for_messages(messages, self.roles.msg_thresholds)
+            if tier_idx < 0:
+                continue
+
+            role_id = tiers[tier_idx]
             if role_id <= 0:
                 continue
 
-            my_role = all_roles.get(role_id)
-            if not my_role:
+            role = all_roles.get(role_id)
+            if not role:
                 continue
 
-            if my_role not in member.roles:
-                await member.add_roles(my_role)
-                for remove_id in roles_to_remove:
-                    r = all_roles.get(remove_id)
-                    if r and r in member.roles:
-                        await member.remove_roles(r)
+            if role not in member.roles:
+                try:
+                    await member.add_roles(role)
+                    # remove other tier roles
+                    for remove_id in _roles_to_remove(role_id, self.roles.messager_tiers):
+                        r = all_roles.get(remove_id)
+                        if r and r in member.roles:
+                            await member.remove_roles(r)
 
-                if chat_channel:
-                    await chat_channel.send(f"<@{member.id}> zdobywa rolę {my_role} za pisanie na **Kicku**!")
+                    if chat_channel:
+                        await chat_channel.send(
+                            f"<@{member.id}> zdobywa rolę **{role}** za aktywność na **Kicku** "
+                            f"({messages} wiadomości)!"
+                        )
+                except Exception as e:
+                    print(f"[FunctionsKick] Error assigning message role to {user_id}: {e}")
 
     async def assign_roles_vip_mod(self):
         """Assign VIP or MOD roles to Discord users based on Kick data."""
@@ -153,18 +235,23 @@ class FunctionsKick(commands.Cog, name="FunctionsKick"):
             AND discord_id IS NOT NULL
         """)
 
-        guild = self.bot.get_guild(686137998177206281)
+        guild_id = self.roles.guild_id or 686137998177206281
+        guild = self.bot.get_guild(int(guild_id))
         if not guild:
             print("Guild not found.")
             return
 
         vip_role = discord.utils.get(guild.roles, id=self.roles.vip_role_id) if self.roles.vip_role_id else None
         mod_role = discord.utils.get(guild.roles, id=self.roles.mod_role_id) if self.roles.mod_role_id else None
-        if not vip_role or not mod_role:
+        if not vip_role and not mod_role:
             print("Required roles not found (KICK_VIP_ROLE/KICK_MOD_ROLE).")
             return
 
-        chat_channel = self.bot.get_channel(776379796367212594)
+        if DebugMode and self.roles.channel_announce_id_debug:
+            channel_id = self.roles.channel_announce_id_debug
+        else:
+            channel_id = self.roles.channel_announce_id or 776379796367212594
+        chat_channel = self.bot.get_channel(int(channel_id)) if channel_id else None
 
         for user_id, is_vip, is_mod in db_rows:
             member = guild.get_member(int(user_id))
@@ -172,18 +259,18 @@ class FunctionsKick(commands.Cog, name="FunctionsKick"):
                 continue
 
             try:
-                if is_vip and vip_role not in member.roles:
+                if is_vip and vip_role and vip_role not in member.roles:
                     await member.add_roles(vip_role)
                     if chat_channel:
                         await chat_channel.send(f"<@{member.id}> otrzymał {vip_role} (VIP Kick).")
 
-                if is_mod and mod_role not in member.roles:
+                if is_mod and mod_role and mod_role not in member.roles:
                     await member.add_roles(mod_role)
                     if chat_channel:
                         await chat_channel.send(f"<@{member.id}> otrzymał {mod_role} (MOD Kick).")
 
             except Exception as e:
-                print(f"Error assigning role to {user_id}: {e}")
+                print(f"[FunctionsKick] Error assigning role to {user_id}: {e}")
 
 
 def setup(bot):
