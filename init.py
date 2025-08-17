@@ -35,20 +35,38 @@ async def create_db_pool():
     print("Connected to database. Pool created.")
 
 #loads cogs as extentions to bot
-if __name__ == '__main__':
+CORE_FIRST = [
+    "functions_twitch",
+    "functions_kick",
+]
+
+if __name__ == "__main__":
+    # Najpierw core
+    for extension in CORE_FIRST:
+        try:
+            bot.load_extension(f"cogs.{extension}")
+            print(f"Loaded core extension '{extension}'")
+        except Exception as e:
+            print(f"Failed to load core extension {extension}\n{type(e).__name__}: {e}")
+
+    # Potem reszta
+    loaded = set(CORE_FIRST)
     for file in os.listdir("cogs"):
-        if file.endswith(".py"):
-            extension = file[:-3]
-            try:
-                bot.load_extension(f"cogs.{extension}")
-                print(f"Loaded extension '{extension}'")
-            except Exception as e:
-                exception = f"{type(e).__name__}: {e}"
-                print(f"Failed to load extension {extension}\n{exception}")
+        if not file.endswith(".py"):
+            continue
+        extension = file[:-3]
+        if extension in loaded:
+            continue
+        try:
+            bot.load_extension(f"cogs.{extension}")
+            print(f"Loaded extension '{extension}'")
+        except Exception as e:
+            print(f"Failed to load extension {extension}\n{type(e).__name__}: {e}")
+
     try:
         bot.loop.run_until_complete(create_db_pool())
-    except:
-       print("Database unreachable.")
+    except Exception as e:
+        print(f"Database unreachable. {type(e).__name__}: {e}")
     
     bot.run(os.environ.get("TOKEN"))
 

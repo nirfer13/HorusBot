@@ -120,7 +120,6 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
 
     @commands.Cog.listener()
     async def on_message(self, ctx):
-        print("Message detected.")
 
         #ctx = await self.bot.get_context(ctx)
         if ctx.author.id != 859729615123251200 and ctx.author.id != 1004008220437778523 and ctx.author.id != 1061222744617922620:

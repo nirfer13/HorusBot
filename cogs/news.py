@@ -68,7 +68,6 @@ class news(commands.Cog, name="news"):
     @commands.Cog.listener()
     async def on_message(self, ctx):
         if ctx.channel.id == NewsChannelID and ctx.author.id != 2918367794959482880 and ctx.author.id != HorusID:
-            print("News detected.")
     
             try:
                 Channel = self.bot.get_channel(CommandChannelID)
