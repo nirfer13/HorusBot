@@ -27,14 +27,14 @@ class RolesConfigTwitch:
     """
     Supported keys in discord_roles.txt:
       # Role IDs (int)
-      - TWT_VIEWER_TIER_1..5         (watchtime tiers)
-      - TWT_MESSAGER_TIER_1..5       (message tiers)
+      - TWT_VIEWER_TIER_1..6         (watchtime tiers)
+      - TWT_MESSAGER_TIER_1..6       (message tiers)
       - TWT_VIP_ROLE
       - TWT_MOD_ROLE
 
-      # Thresholds (CSV of 5 ints; index 0 => tier_1)
-      - TWT_WATCH_THRESHOLDS_H=125,250,375,500,750   (watchtime in HOURS)
-      - TWT_MSG_THRESHOLDS=1000,3600,7500,15000,30000
+      # Thresholds (CSV of 6 ints; index 0 => tier_1)
+      - TWT_WATCH_THRESHOLDS_H=125,250,375,500,750,1500   (watchtime in HOURS)
+      - TWT_MSG_THRESHOLDS=1000,3600,7500,15000,30000,60000
 
       # Discord targets (int)
       - GUILD_ID
@@ -103,28 +103,28 @@ class RolesConfigTwitch:
     def _apply(self) -> None:
         # Role IDs: watchtime tiers
         tiers: List[int] = []
-        for i in range(1, 6):
+        for i in range(1, 7):
             rid = self._parse_int(self._raw.get(f"TWT_VIEWER_TIER_{i}", "0"), 0)
             if rid:
                 tiers.append(rid)
-        self.viewer_tiers = tiers[:5]
+        self.viewer_tiers = tiers[:6]
 
         # Role IDs: message tiers
         tiers = []
-        for i in range(1, 6):
+        for i in range(1, 7):
             rid = self._parse_int(self._raw.get(f"TWT_MESSAGER_TIER_{i}", "0"), 0)
             if rid:
                 tiers.append(rid)
-        self.messager_tiers = tiers[:5]
+        self.messager_tiers = tiers[:6]
 
         self.vip_role_id = self._parse_int(self._raw.get("TWT_VIP_ROLE", "0"), 0)
         self.mod_role_id = self._parse_int(self._raw.get("TWT_MOD_ROLE", "0"), 0)
 
         # Thresholds (defaults mirror your current logic)
-        default_watch_h = [125, 250, 375, 500, 750]
-        default_msg = [1000, 3600, 7500, 15000, 30000]
-        self.watch_thresholds_h = self._parse_int_list(self._raw.get("TWT_WATCH_THRESHOLDS_H", ""), 5, default_watch_h)
-        self.msg_thresholds = self._parse_int_list(self._raw.get("TWT_MSG_THRESHOLDS", ""), 5, default_msg)
+        default_watch_h = [125, 250, 375, 500, 750, 1500]
+        default_msg = [1000, 3600, 7500, 15000, 30000, 60000]
+        self.watch_thresholds_h = self._parse_int_list(self._raw.get("TWT_WATCH_THRESHOLDS_H", ""), 6, default_watch_h)
+        self.msg_thresholds = self._parse_int_list(self._raw.get("TWT_MSG_THRESHOLDS", ""), 6, default_msg)
 
         # Discord IDs
         self.guild_id = self._parse_int(self._raw.get("GUILD_ID", "0"), 0)
@@ -135,9 +135,9 @@ class RolesConfigTwitch:
 # ---------- Helpers ----------
 
 def _tier_for_value(value: float, thresholds: List[int]) -> int:
-    """Return tier index [0..4] via greedy '>= threshold' rule; if below tier_1 -> -1."""
+    """Return tier index [0..5] via greedy '>= threshold' rule; if below tier_1 -> -1."""
     best = -1
-    for idx, th in enumerate(thresholds[:5]):
+    for idx, th in enumerate(thresholds[:6]):
         if value >= th:
             best = idx
     return best
@@ -205,7 +205,7 @@ class FunctionsTwitch(commands.Cog, name="FunctionsTwitch"):
 
         guild_members = {m.id: m for m in guild.members}
         all_roles = {r.id: r for r in guild.roles}
-        tiers = (self.roles.viewer_tiers + [0, 0, 0, 0, 0])[:5]
+        tiers = (self.roles.viewer_tiers + [0, 0, 0, 0, 0, 0])[:6]
 
         # best watchtime per user
         best: Dict[int, int] = {}
@@ -279,7 +279,7 @@ class FunctionsTwitch(commands.Cog, name="FunctionsTwitch"):
 
         guild_members = {m.id: m for m in guild.members}
         all_roles = {r.id: r for r in guild.roles}
-        tiers = (self.roles.messager_tiers + [0, 0, 0, 0, 0])[:5]
+        tiers = (self.roles.messager_tiers + [0, 0, 0, 0, 0, 0])[:6]
 
         # best messages per user
         best: Dict[int, int] = {}

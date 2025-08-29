@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional
 
 import discord
 from discord.ext import commands
@@ -22,9 +22,9 @@ class RolesConfigKick:
     """
     Loads Kick-specific Discord settings from a text file (key=value).
     Supported keys (all optional, but role IDs you use must exist in Discord):
-      - KICK_MESSAGER_TIER_1..5     (role IDs for tiers)
+      - KICK_MESSAGER_TIER_1..6     (role IDs for tiers)
       - KICK_VIP_ROLE, KICK_MOD_ROLE
-      - KICK_MSG_THRESHOLDS         (CSV of 5 increasing ints; default: 1000,3600,7500,15000,30000)
+      - KICK_MSG_THRESHOLDS         (CSV of 6 increasing ints; default: 1000,3600,7500,15000,30000)
       - GUILD_ID                    (Discord guild id)
       - CHANNEL_ANNOUNCE_ID         (target channel id for announcements)
       - CHANNEL_ANNOUNCE_ID_DEBUG   (optional separate channel id in DebugMode)
@@ -94,19 +94,19 @@ class RolesConfigKick:
     def _apply(self) -> None:
         # Role IDs
         tiers: List[int] = []
-        for i in range(1, 6):
+        for i in range(1, 7):
             raw = self._raw.get(f"KICK_MESSAGER_TIER_{i}", "")
             rid = self._parse_int(raw, 0)
             if rid:
                 tiers.append(rid)
-        self.messager_tiers = tiers[:5]
+        self.messager_tiers = tiers[:6]
 
         self.vip_role_id = self._parse_int(self._raw.get("KICK_VIP_ROLE", "0"), 0)
         self.mod_role_id = self._parse_int(self._raw.get("KICK_MOD_ROLE", "0"), 0)
 
         # Thresholds for messages (defaults same jak u Ciebie)
         default_msg = [1000, 3600, 7500, 15000, 30000]
-        self.msg_thresholds = self._parse_int_list(self._raw.get("KICK_MSG_THRESHOLDS", ""), 5, default_msg)
+        self.msg_thresholds = self._parse_int_list(self._raw.get("KICK_MSG_THRESHOLDS", ""), 6, default_msg)
 
         # Discord IDs
         self.guild_id = self._parse_int(self._raw.get("GUILD_ID", "0"), 0)
@@ -118,11 +118,11 @@ class RolesConfigKick:
 
 def _tier_for_messages(messages: int, thresholds: List[int]) -> int:
     """
-    Return tier index [0..4] by messages only.
+    Return tier index [0..5] by messages only.
     Greedy highest tier whose threshold <= messages. If none -> -1.
     """
     best = -1
-    for idx, th in enumerate(thresholds[:5]):
+    for idx, th in enumerate(thresholds[:6]):
         if messages >= th:
             best = idx
     return best
@@ -190,7 +190,7 @@ class FunctionsKick(commands.Cog, name="FunctionsKick"):
             if curr > prev:
                 best[user_id] = curr
 
-        tiers = (self.roles.messager_tiers + [0, 0, 0, 0, 0])[:5]
+        tiers = (self.roles.messager_tiers + [0, 0, 0, 0, 0, 0])[:6]
 
         for user_id, messages in best.items():
             member = guild_members.get(int(user_id))
