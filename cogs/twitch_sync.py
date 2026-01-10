@@ -83,5 +83,5 @@ class TwitchSync(commands.Cog, name="twitch_sync"):
             await ctx.send(f"Wystąpił błąd podczas synchronizacji: {e}")
 
 
-def setup(bot: commands.Bot) -> None:
-    bot.add_cog(TwitchSync(bot))
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(TwitchSync(bot))

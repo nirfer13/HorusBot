@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from dotenv import load_dotenv
 import os
 import asyncpg
+import asyncio
 from asyncpg.pool import create_pool
 
 from globals.globalvariables import DebugMode
@@ -10,7 +11,7 @@ from globals.globalvariables import DebugMode
 # token and other needed variables will be hidden in .env file
 load_dotenv()
 description = 'AlterMMO Discord Horus Bot, Development in progres'
-intents = discord.Intents.default()
+intents = discord.Intents.all()
 intents.members = True
 
 #commands prefix == $
@@ -40,11 +41,17 @@ CORE_FIRST = [
     "functions_kick",
 ]
 
-if __name__ == "__main__":
+async def main():
+
+    try:
+        await create_db_pool()
+    except Exception as e:
+        print(f"Database unreachable. {type(e).__name__}: {e}")
+
     # Najpierw core
     for extension in CORE_FIRST:
         try:
-            bot.load_extension(f"cogs.{extension}")
+            await bot.load_extension(f"cogs.{extension}")
             print(f"Loaded core extension '{extension}'")
         except Exception as e:
             print(f"Failed to load core extension {extension}\n{type(e).__name__}: {e}")
@@ -58,16 +65,16 @@ if __name__ == "__main__":
         if extension in loaded:
             continue
         try:
-            bot.load_extension(f"cogs.{extension}")
+            await bot.load_extension(f"cogs.{extension}")
             print(f"Loaded extension '{extension}'")
         except Exception as e:
             print(f"Failed to load extension {extension}\n{type(e).__name__}: {e}")
 
-    try:
-        bot.loop.run_until_complete(create_db_pool())
-    except Exception as e:
-        print(f"Database unreachable. {type(e).__name__}: {e}")
     
+
+if __name__ == "__main__":
+    asyncio.run(main())
     bot.run(os.environ.get("TOKEN"))
+    print("Bot started successfully.")
 
 

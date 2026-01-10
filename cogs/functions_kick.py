@@ -273,5 +273,5 @@ class FunctionsKick(commands.Cog, name="FunctionsKick"):
                 print(f"[FunctionsKick] Error assigning role to {user_id}: {e}")
 
 
-def setup(bot):
-    bot.add_cog(FunctionsKick(bot))
+async def setup(bot):
+    await bot.add_cog(FunctionsKick(bot))

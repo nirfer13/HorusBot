@@ -86,5 +86,5 @@ class KickSync(commands.Cog, name="kick_sync"):
             await ctx.send(f"Wystąpił błąd podczas synchronizacji: {e}")
 
 
-def setup(bot: commands.Bot) -> None:
-    bot.add_cog(KickSync(bot))
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(KickSync(bot))

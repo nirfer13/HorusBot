@@ -178,5 +178,5 @@ class ideas_voting(commands.Cog, name="ideas_voting"):
             await ctx.send("<@" + str(ctx.author.id) + "> Coś źle napisałeś. Żeby zaproponować pomysł wpisz go w cudzysłowie np. *$pomysl \"Usunąć AlterMMO z internetów.\"*. <:FeelsOkayMan:794117830822854656>")
 
 
-def setup(bot):
-    bot.add_cog(ideas_voting(bot))
+async def setup(bot):
+    await bot.add_cog(ideas_voting(bot))

@@ -377,5 +377,5 @@ class FunctionsTwitch(commands.Cog, name="FunctionsTwitch"):
                 print(f"[FunctionsTwitch] Error assigning VIP/MOD role to {user_id}: {e}")
 
 
-def setup(bot: commands.Bot) -> None:
-    bot.add_cog(FunctionsTwitch(bot))
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(FunctionsTwitch(bot))

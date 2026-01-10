@@ -42,8 +42,7 @@ class news(commands.Cog, name="news"):
         self.current_link = None
 
         Channel = self.bot.get_channel(CommandChannelID)
-        oldMsg = self.bot.get_channel(NewsChannelID).history(limit=20)
-        oldMsg = await oldMsg.flatten()
+        oldMsg = [msg async for msg in Channel.history(limit=20)]
 
         for msg in oldMsg[1:]:
             result = self.contains_link(msg.content)
@@ -143,5 +142,5 @@ class news(commands.Cog, name="news"):
                 emb.set_footer(text='Bardzo dziękuję za wkład w AlterMMO!')
                 await Channel.send(embed=emb)
 
-def setup(bot):
-    bot.add_cog(news(bot))
+async def setup(bot):
+    await bot.add_cog(news(bot))
