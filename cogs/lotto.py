@@ -6,8 +6,10 @@ Function for giveaways. Win ratio calculated based on roles users have.
 import asyncio
 import json
 import random
+import discord
 from datetime import datetime, timedelta
 from discord.ext import commands
+from typing import List
 
 
 class Lotto(commands.Cog, name="lotto"):
@@ -34,11 +36,11 @@ class Lotto(commands.Cog, name="lotto"):
     #f.e https://discord.com/channels/857296258594635816/857296258594635820/858771394191425577
     #858771394191425577 is the ID of the message
     @commands.command(name="lotto")
-    
     async def lotto(self, ctx, ID: int):
+        print("Lotto starting...")
         with open("ranksConfig.json", encoding='utf-8') as jsonFile:
             jsonObject = json.load(jsonFile)
-        users = []
+        users: List[discord.Member] = []
         weights = []
         message = await ctx.channel.fetch_message(ID)
         for reaction in message.reactions:
@@ -49,6 +51,7 @@ class Lotto(commands.Cog, name="lotto"):
         for user in users:				#użytkownicy, którzy zareagowali
             print("=====New User=======")
             print(user)
+            print(user.primary_guild)
             ranksOfUser = []
             for role in user.roles:		
                 ranksOfUser.append(role.name)           #wszystkie role użytkownika dopisujemy
@@ -62,6 +65,11 @@ class Lotto(commands.Cog, name="lotto"):
                     temp_weight = temp_weight + jsonObject[rank]
             if temp_weight > 1.0:						#odjecie 1 gdy ktos ma bonus
                 temp_weight -= 1
+            if user.primary_guild.tag == "ANTY":
+                print("TAG ANTY")
+                temp_weight += 3
+            else:
+                print("Brak ANTY")
             weights.append(temp_weight)
             print(temp_weight)			
 			

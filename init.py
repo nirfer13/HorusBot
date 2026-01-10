@@ -27,12 +27,10 @@ async def on_command_error(self, ctx, exc):
     raise getattr(exc, "original", exc)
 
 async def create_db_pool():
-    #Establishing the connection
-    if DebugMode == False:
-        bot.pg_con = await asyncpg.create_pool(os.environ.get("DATABASE_URL"))
-    else:
-        bot.pg_con = await asyncpg.create_pool(os.environ.get("HEROKU_POSTGRESQL_BRONZE_URL"))  
-
+    dsn = os.getenv("DATABASE_URL") if not DebugMode else os.getenv("HEROKU_POSTGRESQL_BRONZE_URL")
+    if not dsn:
+        raise RuntimeError("Brak DATABASE_URL / HEROKU_POSTGRESQL_BRONZE_URL w env.")
+    bot.pg_con = await asyncpg.create_pool(dsn)
     print("Connected to database. Pool created.")
 
 #loads cogs as extentions to bot
@@ -47,6 +45,7 @@ async def main():
         await create_db_pool()
     except Exception as e:
         print(f"Database unreachable. {type(e).__name__}: {e}")
+        return
 
     # Najpierw core
     for extension in CORE_FIRST:
@@ -70,11 +69,11 @@ async def main():
         except Exception as e:
             print(f"Failed to load extension {extension}\n{type(e).__name__}: {e}")
 
-    
+    token = os.getenv("TOKEN")
+    if not token:
+        raise RuntimeError("No TOKEN in env.")
+    await bot.start(token)
 
 if __name__ == "__main__":
     asyncio.run(main())
-    bot.run(os.environ.get("TOKEN"))
     print("Bot started successfully.")
-
-

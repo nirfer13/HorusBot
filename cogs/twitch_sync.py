@@ -70,7 +70,7 @@ class TwitchSync(commands.Cog, name="twitch_sync"):
             await ctx.send("Brak coga FunctionsTwitch – załaduj go przed twitch_sync.")
             return
 
-        await ctx.trigger_typing()
+        await ctx.channel.typing()
         try:
             print("[twitch_sync] Manual check - messages.")
             await ft.assign_roles_messages()

@@ -75,7 +75,7 @@ class KickSync(commands.Cog, name="kick_sync"):
             await ctx.send("Brak coga FunctionsKick – załaduj go przed kick_sync.")
             return
 
-        await ctx.trigger_typing()
+        await ctx.channel.typing()
         try:
             print("[kick_sync] Manual check - messages.")
             await fk.assign_roles_messages()

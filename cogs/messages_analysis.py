@@ -175,10 +175,10 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
     @commands.command(name="spamer")
     async def spamer(self,ctx):
         my_role = discord.utils.get(ctx.guild.roles, id=SpamerID)
-        if my_role in ctx.message.author.roles:
+        if my_role in ctx.author.roles:
             gif = "flexgifs/" + random.choice(os.listdir("flexgifs/"))
-            await ctx.channel.send(file=discord.File(gif))
-            await ctx.channel.send('Tak, oto największy spammer, czyli <@' + format(ctx.message.author.id) + '> <:Nerdge:984770661702578227>')
+            await ctx.send(file=discord.File(gif))
+            await ctx.send('Tak, oto największy spammer, czyli <@' + format(ctx.author.id) + '> <:Nerdge:984770661702578227>')
         else:
             await ctx.channel.send('Pfff, leszczyku discordowy, jak Ty nawet zdania sklecić nie umiesz... <:Pepega:936907616293093377>')
 
