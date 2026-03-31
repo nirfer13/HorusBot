@@ -1,0 +1,90 @@
+{
+  "1488561614033784942": {
+    "vote_message_id": 1488561614033784942,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "Testowanko",
+    "image_path": "emote_uploads/1488561608098578472_Testowanko.png",
+    "source_message_id": 1488561608098578472,
+    "created_ts": 1774971145.644564,
+    "status": "active"
+  },
+  "1488571367317307542": {
+    "vote_message_id": 1488571367317307542,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "123",
+    "image_path": "emote_uploads/1488571362153992263_123.png",
+    "source_message_id": 1488571362153992263,
+    "created_ts": 1774973471.086542,
+    "status": "finished"
+  },
+  "1488571762580000868": {
+    "vote_message_id": 1488571762580000868,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "123",
+    "image_path": "emote_uploads/1488571757169348809_123.png",
+    "source_message_id": 1488571757169348809,
+    "created_ts": 1774973565.210534,
+    "status": "finished"
+  },
+  "1488572828319223808": {
+    "vote_message_id": 1488572828319223808,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "1234567",
+    "image_path": "emote_uploads/1488572823478862034_1234567.png",
+    "source_message_id": 1488572823478862034,
+    "created_ts": 1774973819.325749,
+    "status": "finished"
+  },
+  "1488574144667713706": {
+    "vote_message_id": 1488574144667713706,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "123456",
+    "image_path": "emote_uploads/1488574140024881223_123456.png",
+    "source_message_id": 1488574140024881223,
+    "created_ts": 1774974133.163662,
+    "status": "finished"
+  },
+  "1488576216309956668": {
+    "vote_message_id": 1488576216309956668,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "peeposleep",
+    "image_path": "emote_uploads/1488576209716510871_peeposleep.png",
+    "source_message_id": 1488576209716510871,
+    "created_ts": 1774974627.038797,
+    "status": "finished"
+  },
+  "1488577012237996055": {
+    "vote_message_id": 1488577012237996055,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "peeposleep",
+    "image_path": "emote_uploads/1488577006747521115_peeposleep.png",
+    "source_message_id": 1488577006747521115,
+    "created_ts": 1774974817.064181,
+    "status": "finished"
+  },
+  "1488578179529707642": {
+    "vote_message_id": 1488578179529707642,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "peeposleep",
+    "image_path": "emote_uploads/1488578174488154223_peeposleep.png",
+    "source_message_id": 1488578174488154223,
+    "created_ts": 1774975095.268697,
+    "status": "finished"
+  }
+}

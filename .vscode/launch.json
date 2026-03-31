@@ -1,0 +1,14 @@
+{
+   "version": "0.2.0",
+   "configurations": [
+      {
+         "name": "Run HorusBot",
+         "type": "debugpy",
+         "request": "launch",
+         "program": "${workspaceFolder}/init.py",
+         "console": "integratedTerminal",
+         "cwd": "${workspaceFolder}",
+         "python": "C:/Programowanie/HorusBot/.venv/Scripts/python.exe"
+      }
+   ]
+}
