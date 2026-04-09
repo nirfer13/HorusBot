@@ -20,8 +20,7 @@ HorusID = 1004008220437778523
 GuildID = 686137998177206281
 SpamerID = 1061338676338118707
 VOTES_REQ = 6
-VOTE_DURATION = 60 * 60 * 72  # 24h
-VOTE_DURATION = 60  # 24h
+VOTE_DURATION = 60 * 60 * 24  # 24h
 
 DATA_FILE = Path("emote_votes.json")
 
@@ -222,7 +221,9 @@ class emote_voting(commands.Cog, name="emote_voting"):
 
         created_ts = vote["created_ts"]
         now = discord.utils.utcnow().timestamp()
+        
         remaining = max(0, created_ts + VOTE_DURATION - now)
+        print("Vote %s, remaining %s", str(vote_message_id), str(remaining))
 
         # Wait until vote expiration
         await asyncio.sleep(remaining)
@@ -452,7 +453,7 @@ class emote_voting(commands.Cog, name="emote_voting"):
 
         embed = discord.Embed(
             title=f"Dodać emotkę **{emotename.upper()}**?",
-            description="Macie 72h na głosowanie!",
+            description="Macie 24h na głosowanie!",
             colour=0x00BF28,
             timestamp=discord.utils.utcnow()
         )

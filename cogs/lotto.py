@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from discord.ext import commands
 from typing import List
 
+GIVEAWAY_ID = 796055059082248212
+
 
 class Lotto(commands.Cog, name="lotto"):
     def __init__(self, bot: commands.Bot):
@@ -37,46 +39,85 @@ class Lotto(commands.Cog, name="lotto"):
     #858771394191425577 is the ID of the message
     @commands.command(name="lotto")
     async def lotto(self, ctx, ID: int):
+
         print("Lotto starting...")
-        with open("ranksConfig.json", encoding='utf-8') as jsonFile:
+
+        with open("C:/Programowanie/HorusBot/ranksConfig.json", encoding="utf-8") as jsonFile:
             jsonObject = json.load(jsonFile)
+
         users: List[discord.Member] = []
+        seen_user_ids = set()
         weights = []
-        message = await ctx.channel.fetch_message(ID)
+
+        channel = await self.bot.fetch_channel(GIVEAWAY_ID)
+        message = await channel.fetch_message(ID)
+
+        print("Before reactions...")
+
+        guild = message.guild
+
         for reaction in message.reactions:
             async for user in reaction.users():
-                guild = message.guild
-                if guild.get_member(user.id) is not None:
-                    users.append(user)
-        for user in users:				#użytkownicy, którzy zareagowali
+                if user.bot:
+                    continue
+
+                member = guild.get_member(user.id)
+                if member is not None and member.id not in seen_user_ids:
+                    seen_user_ids.add(member.id)
+                    users.append(member)
+
+        print("Go through users...")
+
+        for user in users:
             print("=====New User=======")
             print(user)
-            print(user.primary_guild)
-            ranksOfUser = []
-            for role in user.roles:		
-                ranksOfUser.append(role.name)           #wszystkie role użytkownika dopisujemy
-            #weights.append(1)							#domyslnie szansa x1
+
+            ranksOfUser = [role.name for role in user.roles]
             temp_weight = 1.0
-            for rank in jsonObject.keys():              #sprawdzanie po skonfigurowanych rankach
-                #print(ranksOfUser)
+
+            for rank in jsonObject.keys():
                 if rank in ranksOfUser:
                     print(rank)
                     print("===")
-                    temp_weight = temp_weight + jsonObject[rank]
-            if temp_weight > 1.0:						#odjecie 1 gdy ktos ma bonus
+                    temp_weight += jsonObject[rank]
+
+            if temp_weight > 1.0:
                 temp_weight -= 1
-            if user.primary_guild.tag == "ANTY":
+
+            # zabezpieczenie, gdy primary_guild nie istnieje
+            if getattr(user, "primary_guild", None) and user.primary_guild.tag == "ANTY":
                 print("TAG ANTY")
                 temp_weight += 3
             else:
                 print("Brak ANTY")
+
             weights.append(temp_weight)
-            print(temp_weight)			
-			
+            print(temp_weight)
+
+        if not users:
+            await ctx.channel.send("Nie znaleziono żadnych uczestników giveawaya.")
+            return
+
+        total_weight = sum(weights)
+
+        chances_text = []
+        for user, weight in zip(users, weights):
+            chance = (weight / total_weight) * 100
+            chances_text.append(f"{user.mention}: **{chance:.2f}%** (waga: {weight})")
+
         print(weights)
         print(users)
-        winner = random.choices(users, weights)
-        await ctx.channel.send('Giveawaya wygrał <@' + str(winner[0].id) + '>! Gratulacje!')
+
+        winner = random.choices(users, weights=weights, k=1)[0]
+        winner_index = users.index(winner)
+        winner_chance = (weights[winner_index] / total_weight) * 100
+
+        result_message = (
+            f"Giveawaya wygrał {winner.mention}! Gratulacje!\n"
+            f"Jego szansa na wygraną wynosiła **{winner_chance:.2f}%**.\n\n"
+        )
+
+        await ctx.channel.send(result_message)
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Lotto(bot))
