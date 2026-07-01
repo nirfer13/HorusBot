@@ -114,8 +114,12 @@ class news(commands.Cog, name="news"):
             role2 = discord.utils.get(ctx.guild.roles, id=1061601744754327672) #Pismak
             role3 = discord.utils.get(ctx.guild.roles, id=1061601741470175302) #Dziennikarz
 
-            await Channel.send(str(ctx.author.name) + ", brawo! Udało Ci się poprawnie dodać newsa! <a:PepoG:936907752155021342> Masz już " + str(file_data[id]) + " poprawnych newsów na koncie.")
-
+            news_count = file_data[id] * 4
+            await Channel.send(
+                f"{ctx.author.name}, brawo! Udało Ci się poprawnie dodać newsa! "
+                f"<a:PepoG:936907752155021342> Masz już {news_count:.0f} poprawnych newsów na koncie."
+            )
+            
             id = str(author.id)
             if id in file_data.keys() and author.id != 1061222744617922620:
                 if file_data[id] >= 8 and file_data[id] < 20 and role1 not in author.roles:

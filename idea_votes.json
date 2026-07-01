@@ -1,0 +1,38 @@
+{
+  "1505165440442302654": {
+    "vote_message_id": 1505165440442302654,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "idea": "\"Testowanko 123 Testowanko 123 Testowanko 123 Testowanko 123 Testowanko 123 Testowanko 123 Testowanko 123 Testowanko 123 Testowanko 123 Testowanko 123 \"",
+    "source_message_id": 1505165436688273450,
+    "created_ts": 1778929806.161763,
+    "status": "finished",
+    "yes_count": 0,
+    "no_count": 2
+  },
+  "1505542325315698699": {
+    "vote_message_id": 1505542325315698699,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 833974641944297472,
+    "idea": "\"dodać nowy kanał dla gry Farever\"",
+    "source_message_id": 1505542321150890028,
+    "created_ts": 1779019662.431109,
+    "status": "finished",
+    "yes_count": 2,
+    "no_count": 4
+  },
+  "1514981957468028948": {
+    "vote_message_id": 1514981957468028948,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 819673266100764684,
+    "idea": "\"Do gry, tu na DC łowca potworów, możnaby dodać opcję przekazania i adopcji towarzysza wybranemu graczowi :)\"",
+    "source_message_id": 1514981953118670899,
+    "created_ts": 1781270246.790078,
+    "status": "finished",
+    "yes_count": 2,
+    "no_count": 1
+  }
+}

@@ -119,5 +119,60 @@
     "source_message_id": 1488582217545416775,
     "created_ts": 1774976061.333962,
     "status": "finished"
+  },
+  "1493490235991134212": {
+    "vote_message_id": 1493490235991134212,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "peepoconfused",
+    "image_path": "emote_uploads/1493490229900738570_peepoconfused.gif",
+    "source_message_id": 1493490229900738570,
+    "created_ts": 1776146221.217211,
+    "status": "finished"
+  },
+  "1493490539423600660": {
+    "vote_message_id": 1493490539423600660,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "peepoevil",
+    "image_path": "emote_uploads/1493490532251336735_peepoevil.gif",
+    "source_message_id": 1493490532251336735,
+    "created_ts": 1776146293.34274,
+    "status": "finished"
+  },
+  "1496767841851015228": {
+    "vote_message_id": 1496767841851015228,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "WoWKiller",
+    "image_path": "emote_uploads/1496767835211305001_WoWKiller.png",
+    "source_message_id": 1496767835211305001,
+    "created_ts": 1776927663.299937,
+    "status": "finished"
+  },
+  "1496773943392997378": {
+    "vote_message_id": 1496773943392997378,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "NextGen",
+    "image_path": "emote_uploads/1496773935272824912_NextGen.png",
+    "source_message_id": 1496773935272824912,
+    "created_ts": 1776929117.990692,
+    "status": "finished"
+  },
+  "1501489360955113562": {
+    "vote_message_id": 1501489360955113562,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "peepoSub",
+    "image_path": "emote_uploads/1501489355397795912_peepoSub.png",
+    "source_message_id": 1501489355397795912,
+    "created_ts": 1778053361.017543,
+    "status": "finished"
   }
 }
