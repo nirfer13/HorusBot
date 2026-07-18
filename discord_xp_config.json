@@ -1,0 +1,42 @@
+{
+    "message_xp_min": 25,
+    "message_xp_max": 40,
+    "message_cooldown_seconds": 60,
+
+    "reaction_bonus_xp": 25,
+    "reaction_threshold": 3,
+
+    "save_interval_min_seconds": 300,
+    "save_interval_max_seconds": 600,
+
+    "streak_bonus_per_day": 0.10,
+    "maximum_streak_bonus": 2.0,
+
+    "role_rewards_enabled": false,
+    "guild_id": 686137998177206281,
+
+    "xp_bar_length": 20,
+
+    "ranks": [
+        {
+            "name": "Nowicjusz",
+            "required_xp": 0,
+            "role_id": 111111111111111111
+        },
+        {
+            "name": "Poszukiwacz przygód",
+            "required_xp": 2500,
+            "role_id": 222222222222222222
+        },
+        {
+            "name": "Weteran",
+            "required_xp": 7500,
+            "role_id": 333333333333333333
+        },
+        {
+            "name": "Mistrz",
+            "required_xp": 15000,
+            "role_id": 444444444444444444
+        }
+    ]
+}

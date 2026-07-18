@@ -9,7 +9,6 @@ import asyncio
 from datetime import datetime, timedelta
 from discord.ext import commands
 
-
 class TwitchSync(commands.Cog, name="twitch_sync"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -49,6 +48,8 @@ class TwitchSync(commands.Cog, name="twitch_sync"):
                             await ft.assign_roles_messages()
                             print("[twitch_sync] Twitch check - watchtime.")
                             await ft.assign_roles_watchtime()
+                            print("[twitch_sync] Twitch check - watchstreak.")
+                            await ft.assign_roles_watchstreaks()
                             print("[twitch_sync] Twitch check - VIP/MOD.")
                             await ft.assign_roles_vip_mod()
                             print("[twitch_sync] Synchronization completed.")
@@ -76,6 +77,8 @@ class TwitchSync(commands.Cog, name="twitch_sync"):
             await ft.assign_roles_messages()
             print("[twitch_sync] Manual check - watchtime.")
             await ft.assign_roles_watchtime()
+            print("[twitch_sync] Twitch check - watchstreak.")
+            await ft.assign_roles_watchstreaks()
             print("[twitch_sync] Manual check - VIP/MOD.")
             await ft.assign_roles_vip_mod()
             await ctx.send("Role z Twitcha zsynchronizowane.")

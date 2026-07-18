@@ -27,19 +27,21 @@ class RolesConfigTwitch:
     """
     Supported keys in discord_roles.txt:
       # Role IDs (int)
-      - TWT_VIEWER_TIER_1..6         (watchtime tiers)
-      - TWT_MESSAGER_TIER_1..6       (message tiers)
+      - TWT_VIEWER_TIER_1..6          (watchtime tiers)
+      - TWT_MESSAGER_TIER_1..6        (message tiers)
+      - TWT_WATCHSTREAK_TIER_1..6     (watchstreak tiers)
       - TWT_VIP_ROLE
       - TWT_MOD_ROLE
 
       # Thresholds (CSV of 6 ints; index 0 => tier_1)
-      - TWT_WATCH_THRESHOLDS_H=125,250,375,500,750,1500   (watchtime in HOURS)
+      - TWT_WATCH_THRESHOLDS_H=125,250,375,500,750,1500
       - TWT_MSG_THRESHOLDS=1000,3600,7500,15000,30000,60000
+      - TWT_WS_THRESHOLDS=50,100,200,300,500,1000
 
       # Discord targets (int)
       - GUILD_ID
       - CHANNEL_ANNOUNCE_ID
-      - CHANNEL_ANNOUNCE_ID_DEBUG    (optional when DebugMode is True)
+      - CHANNEL_ANNOUNCE_ID_DEBUG
     """
 
     def __init__(self, path: Optional[Path] = None) -> None:
@@ -48,11 +50,14 @@ class RolesConfigTwitch:
 
         self.viewer_tiers: List[int] = []
         self.messager_tiers: List[int] = []
+        self.watchstreak_tiers: List[int] = []
+        
         self.vip_role_id: int = 0
         self.mod_role_id: int = 0
 
         self.watch_thresholds_h: List[int] = []
         self.msg_thresholds: List[int] = []
+        self.ws_thresholds: List[int] = []
 
         self.guild_id: int = 0
         self.channel_announce_id: int = 0
@@ -117,14 +122,25 @@ class RolesConfigTwitch:
                 tiers.append(rid)
         self.messager_tiers = tiers[:6]
 
+        # Role IDs: watchstreak tiers
+        tiers = []
+        for i in range(1, 7):
+            rid = self._parse_int(self._raw.get(f"TWT_WATCHSTREAK_TIER_{i}", "0"), 0)
+            if rid:
+                tiers.append(rid)
+        self.watchstreak_tiers = tiers[:6]
+
         self.vip_role_id = self._parse_int(self._raw.get("TWT_VIP_ROLE", "0"), 0)
         self.mod_role_id = self._parse_int(self._raw.get("TWT_MOD_ROLE", "0"), 0)
 
         # Thresholds (defaults mirror your current logic)
         default_watch_h = [125, 250, 375, 500, 750, 1500]
         default_msg = [1000, 3600, 7500, 15000, 30000, 60000]
+        defaults_ws = [50, 100, 200, 300, 500, 1000]
         self.watch_thresholds_h = self._parse_int_list(self._raw.get("TWT_WATCH_THRESHOLDS_H", ""), 6, default_watch_h)
         self.msg_thresholds = self._parse_int_list(self._raw.get("TWT_MSG_THRESHOLDS", ""), 6, default_msg)
+        self.ws_thresholds = self._parse_int_list(self._raw.get("TWT_WS_THRESHOLDS", ""), 6, defaults_ws)
+
 
         # Discord IDs
         self.guild_id = self._parse_int(self._raw.get("GUILD_ID", "0"), 0)
@@ -322,6 +338,127 @@ class FunctionsTwitch(commands.Cog, name="FunctionsTwitch"):
                         )
                 except Exception as e:
                     print(f"[FunctionsTwitch] Error assigning message role to {user_id}: {e}")
+
+    # --- WATCHSTREAK ---
+
+    async def assign_roles_watchstreaks(self) -> None:
+        """
+        Assign Discord roles based on the user's Twitch watchstreak.
+
+        Requires table:
+            chatters_information(
+                discord_id BIGINT,
+                watchstreak INTEGER,
+                ...
+            )
+        """
+        rows = await self.bot.pg_con.fetch("""
+            SELECT discord_id, watchstreak
+            FROM chatters_information
+            WHERE watchstreak >= 1
+            AND discord_id IS NOT NULL
+        """)
+
+        guild_id = self.roles.guild_id
+        if not guild_id:
+            print("[FunctionsTwitch] Missing GUILD_ID in config.")
+            return
+
+        guild = self.bot.get_guild(int(guild_id))
+        if guild is None:
+            print("[FunctionsTwitch] Guild not found or bot not in guild.")
+            return
+
+        channel_id = (
+            self.roles.channel_announce_id_debug
+            if DebugMode and self.roles.channel_announce_id_debug
+            else self.roles.channel_announce_id
+        )
+
+        announce_ch = (
+            self.bot.get_channel(int(channel_id))
+            if channel_id
+            else None
+        )
+
+        guild_members = {member.id: member for member in guild.members}
+        all_roles = {role.id: role for role in guild.roles}
+
+        watchstreak_tiers = (
+            self.roles.watchstreak_tiers + [0, 0, 0, 0, 0, 0]
+        )[:6]
+
+        # Store the highest watchstreak for each Discord user.
+        # This protects against duplicate discord_id entries in the database.
+        best: Dict[int, int] = {}
+
+        for discord_id, watchstreak in rows:
+            user_id = int(discord_id)
+            current_watchstreak = int(watchstreak or 0)
+            previous_watchstreak = best.get(user_id, 0)
+
+            if current_watchstreak > previous_watchstreak:
+                best[user_id] = current_watchstreak
+
+        for user_id, watchstreak in best.items():
+            member = guild_members.get(user_id)
+            if member is None:
+                continue
+
+            tier_idx = _tier_for_value(
+                watchstreak,
+                self.roles.ws_thresholds,
+            )
+
+            if tier_idx < 0:
+                continue
+
+            role_id = watchstreak_tiers[tier_idx]
+            if role_id <= 0:
+                continue
+
+            role = all_roles.get(role_id)
+            if role is None:
+                print(
+                    f"[FunctionsTwitch] Watchstreak role {role_id} "
+                    f"not found in guild."
+                )
+                continue
+
+            if role in member.roles:
+                continue
+
+            try:
+                await member.add_roles(
+                    role,
+                    reason=f"Twitch watchstreak: {watchstreak}",
+                )
+
+                # Remove all other watchstreak tier roles.
+                for remove_id in _roles_to_remove(
+                    role_id,
+                    self.roles.watchstreak_tiers,
+                ):
+                    remove_role = all_roles.get(remove_id)
+
+                    if remove_role and remove_role in member.roles:
+                        await member.remove_roles(
+                            remove_role,
+                            reason="Twitch watchstreak: tier change",
+                        )
+
+                if announce_ch:
+                    await announce_ch.send(
+                        f"<@{member.id}> zdobywa rolę **{role.name}** "
+                        f"za serię oglądania streamów na **Twitchu** "
+                        f"wynoszącą **{watchstreak}**!"
+                    )
+
+            except Exception as e:
+                print(
+                    f"[FunctionsTwitch] Error assigning watchstreak role "
+                    f"to {user_id}: {e}"
+                )
 
     # --- VIP / MOD ---
 

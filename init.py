@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 import asyncpg
 import asyncio
+import logging
 from asyncpg.pool import create_pool
 
 from globals.globalvariables import DebugMode
@@ -13,6 +14,12 @@ load_dotenv()
 description = 'AlterMMO Discord Horus Bot, Development in progres'
 intents = discord.Intents.all()
 intents.members = True
+
+logging.basicConfig(
+level=logging.INFO,
+format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 #commands prefix == $
 bot = commands.Bot(
