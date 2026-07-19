@@ -9,7 +9,7 @@
     "save_interval_min_seconds": 300,
     "save_interval_max_seconds": 600,
 
-    "streak_bonus_per_day": 0.10,
+    "streak_bonus_per_day": 0.02,
     "maximum_streak_bonus": 2.0,
 
     "role_rewards_enabled": false,
@@ -19,24 +19,94 @@
 
     "ranks": [
         {
-            "name": "Nowicjusz",
+            "name": "Szczur",
             "required_xp": 0,
-            "role_id": 111111111111111111
+            "role_id": 687186427892465742
         },
         {
-            "name": "Poszukiwacz przygód",
-            "required_xp": 2500,
-            "role_id": 222222222222222222
+            "name": "Lis",
+            "required_xp": 150,
+            "role_id": 687186425816547328
         },
         {
-            "name": "Weteran",
-            "required_xp": 7500,
-            "role_id": 333333333333333333
+            "name": "Dzik",
+            "required_xp": 1000,
+            "role_id": 687186359945003013
         },
         {
-            "name": "Mistrz",
+            "name": "Niedźwiedź",
+            "required_xp": 2000,
+            "role_id": 687186296359354380
+        },
+        {
+            "name": "Ork",
+            "required_xp": 5000,
+            "role_id": 789440084343521310
+        },
+        {
+            "name": "Szkielet",
             "required_xp": 15000,
-            "role_id": 444444444444444444
+            "role_id": 800608558831894568
+        },
+        {
+            "name": "Zombie",
+            "required_xp": 40000,
+            "role_id": 806769989096308738
+        },
+        {
+            "name": "Mumia",
+            "required_xp": 80000,
+            "role_id": 811482458687930399
+        },
+        {
+            "name": "Mroczny Rycerz",
+            "required_xp": 250000,
+            "role_id": 831781255737638954
+        },
+        {
+            "name": "Czerwony Smok",
+            "required_xp": 750000,
+            "role_id": 769059170115911711
+        },
+        {
+            "name": "Hydra",
+            "required_xp": 1500000,
+            "role_id": 1038568664959557682
+        },
+        {
+            "name": "Behemoth",
+            "required_xp": 2250000,
+            "role_id": 1528304393177399296
+        },
+        {
+            "name": "Lewiatan",
+            "required_xp": 3000000,
+            "role_id": 1528306908631404654
+        },
+        {
+            "name": "Feniks",
+            "required_xp": 3750000,
+            "role_id": 1528306942915645440
+        },
+        {
+            "name": "Licz",
+            "required_xp": 4500000,
+            "role_id": 1528306986087878696
+        },
+        {
+            "name": "Arcydemon",
+            "required_xp": 5250000,
+            "role_id": 1528307077666181200
+        },
+        {
+            "name": "Tytan",
+            "required_xp": 6000000,
+            "role_id": 1528307039481364541
+        },
+        {
+            "name": "Pradawny Smok",
+            "required_xp": 6750000,
+            "role_id": 1528308491196825680
         }
     ]
 }

@@ -567,109 +567,110 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 int,
             ] = defaultdict(int)
 
-            async with self.bot.pg_con.transaction():
-                for (
-                    message_id,
-                    reaction_data,
-                ) in reaction_bonuses_to_save.items():
-                    discord_id, username = reaction_data
+            async with self.bot.pg_con.acquire() as connection:
+                async with connection.transaction():
+                    for (
+                        message_id,
+                        reaction_data,
+                    ) in reaction_bonuses_to_save.items():
+                        discord_id, username = reaction_data
 
-                    inserted_message_id = (
-                        await self.bot.pg_con.fetchval(
-                            """
-                            INSERT INTO discord_message_xp_bonus (
+                        inserted_message_id = (
+                            await connection.fetchval(
+                                """
+                                INSERT INTO discord_message_xp_bonus (
+                                    message_id,
+                                    chtr_id
+                                )
+                                VALUES ($1, $2)
+                                ON CONFLICT (message_id)
+                                DO NOTHING
+                                RETURNING message_id
+                                """,
                                 message_id,
-                                chtr_id
+                                discord_id,
                             )
-                            VALUES ($1, $2)
-                            ON CONFLICT (message_id)
-                            DO NOTHING
-                            RETURNING message_id
+                        )
+
+                        if inserted_message_id is None:
+                            continue
+
+                        streak = await self._get_or_update_chatstreak(
+                            discord_id=discord_id,
+                            username=username,
+                        )
+
+                        reaction_xp = self._apply_streak_bonus(
+                            base_xp=self.config[
+                                "reaction_bonus_xp"
+                            ],
+                            streak=streak,
+                        )
+
+                        reaction_xp_to_save[
+                            discord_id
+                        ] += reaction_xp
+
+                        usernames_to_save[
+                            discord_id
+                        ] = username
+
+                    total_xp_to_save: Dict[
+                        int,
+                        int,
+                    ] = defaultdict(int)
+
+                    for discord_id, gained_xp in (
+                        message_xp_to_save.items()
+                    ):
+                        total_xp_to_save[
+                            discord_id
+                        ] += gained_xp
+
+                    for discord_id, gained_xp in (
+                        reaction_xp_to_save.items()
+                    ):
+                        total_xp_to_save[
+                            discord_id
+                        ] += gained_xp
+
+                    records = [
+                        (
+                            discord_id,
+                            usernames_to_save.get(
+                                discord_id,
+                                str(discord_id),
+                            ),
+                            gained_xp,
+                        )
+                        for discord_id, gained_xp
+                        in total_xp_to_save.items()
+                    ]
+
+                    if records:
+                        await connection.executemany(
+                            """
+                            INSERT INTO chatters_information_discord (
+                                chtr_id,
+                                chtr_name,
+                                xp,
+                                chatstreak
+                            )
+                            VALUES ($1, $2, $3, 0)
+                            ON CONFLICT (chtr_id)
+                            DO UPDATE SET
+                                chtr_name = EXCLUDED.chtr_name,
+                                xp = (
+                                    chatters_information_discord.xp
+                                    + EXCLUDED.xp
+                                )
                             """,
-                            message_id,
-                            discord_id,
-                        )
+                            records,
                     )
 
-                    if inserted_message_id is None:
-                        continue
-
-                    streak = await self._get_or_update_chatstreak(
-                        discord_id=discord_id,
-                        username=username,
+                    changed_user_ids.update(
+                        total_xp_to_save.keys()
                     )
-
-                    reaction_xp = self._apply_streak_bonus(
-                        base_xp=self.config[
-                            "reaction_bonus_xp"
-                        ],
-                        streak=streak,
-                    )
-
-                    reaction_xp_to_save[
-                        discord_id
-                    ] += reaction_xp
-
-                    usernames_to_save[
-                        discord_id
-                    ] = username
-
-                total_xp_to_save: Dict[
-                    int,
-                    int,
-                ] = defaultdict(int)
-
-                for discord_id, gained_xp in (
-                    message_xp_to_save.items()
-                ):
-                    total_xp_to_save[
-                        discord_id
-                    ] += gained_xp
-
-                for discord_id, gained_xp in (
-                    reaction_xp_to_save.items()
-                ):
-                    total_xp_to_save[
-                        discord_id
-                    ] += gained_xp
-
-                records = [
-                    (
-                        discord_id,
-                        usernames_to_save.get(
-                            discord_id,
-                            str(discord_id),
-                        ),
-                        gained_xp,
-                    )
-                    for discord_id, gained_xp
-                    in total_xp_to_save.items()
-                ]
-
-                if records:
-                    await self.bot.pg_con.executemany(
-                        """
-                        INSERT INTO chatters_information_discord (
-                            chtr_id,
-                            chtr_name,
-                            xp,
-                            chatstreak
-                        )
-                        VALUES ($1, $2, $3, 0)
-                        ON CONFLICT (chtr_id)
-                        DO UPDATE SET
-                            chtr_name = EXCLUDED.chtr_name,
-                            xp = (
-                                chatters_information_discord.xp
-                                + EXCLUDED.xp
-                            )
-                        """,
-                        records,
-                    )
-
-                changed_user_ids.update(
-                    total_xp_to_save.keys()
-                )
 
             logger.info(
                 "Saved XP for %s Discord users. Total: %s.",
@@ -730,6 +731,24 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 break
 
         return current_rank, next_rank
+    
+    def _format_rank(
+        self,
+        rank: Optional[Dict[str, Any]],
+    ) -> str:
+        """
+        Return a Discord role mention when the rank has a valid role ID.
+        Otherwise return the configured rank name.
+        """
+        if rank is None:
+            return "Brak rangi"
+
+        role_id = rank.get("role_id")
+
+        if role_id:
+            return f"<@&{int(role_id)}>"
+
+        return str(rank.get("name", "Nieznana ranga"))
 
     async def _update_roles_for_users(
         self,
@@ -995,20 +1014,32 @@ class DiscordXP(commands.Cog, name="discord_xp"):
 
         row = await self.bot.pg_con.fetchrow(
             """
+            WITH ranked_users AS (
+                SELECT
+                    info.chtr_id,
+                    info.xp,
+                    info.chatstreak,
+                    activity.last_active_date,
+                    ROW_NUMBER() OVER (
+                        ORDER BY info.xp DESC, info.chtr_id ASC
+                    ) AS ranking_position
+                FROM chatters_information_discord AS info
+                LEFT JOIN discord_chat_activity AS activity
+                    ON activity.chtr_id = info.chtr_id
+            )
             SELECT
-                info.xp,
+                xp,
+                ranking_position,
                 CASE
-                    WHEN activity.last_active_date >= CURRENT_DATE - 1
-                        THEN info.chatstreak
+                    WHEN last_active_date >= CURRENT_DATE - 1
+                        THEN chatstreak
                     ELSE 0
                 END AS chatstreak
-            FROM chatters_information_discord AS info
-            LEFT JOIN discord_chat_activity AS activity
-                ON activity.chtr_id = info.chtr_id
-            WHERE info.chtr_id = $1
+            FROM ranked_users
+            WHERE chtr_id = $1
             """,
             target_member.id,
-        )
+            )
 
         if row is None:
             await ctx.send(
@@ -1019,41 +1050,64 @@ class DiscordXP(commands.Cog, name="discord_xp"):
 
         current_xp = row["xp"]
         chatstreak = row["chatstreak"]
+        ranking_position = row["ranking_position"]
 
         current_rank, next_rank = (
             self._get_rank_data(current_xp)
         )
 
-        current_rank_name = (
-            current_rank["name"]
-            if current_rank is not None
-            else "Brak rangi"
+        current_rank_display = self._format_rank(
+            current_rank
+        )
+
+        next_rank_display = self._format_rank(
+            next_rank
         )
 
         if next_rank is None:
+            current_streak_bonus = min(
+                chatstreak
+                * float(self.config["streak_bonus_per_day"]),
+                float(self.config["maximum_streak_bonus"]),
+            )
+
+            streak_multiplier = 1 + current_streak_bonus
+
             embed = discord.Embed(
                 title=f"XP — {target_member.display_name}",
                 description=(
                     f"**{current_xp:,} XP**\n\n"
-                    "████████████████████\n"
+                    f"`{'█' * int(self.config['xp_bar_length'])}`\n"
                     "**Osiągnięto najwyższą rangę.**"
                 ),
                 color=0xD9A441,
             )
 
             embed.set_thumbnail(
-                url=ctx.author.display_avatar.url
+                url=target_member.display_avatar.url
             )
 
             embed.add_field(
-                name="Ranga",
-                value=current_rank_name,
+                name="Aktualna ranga",
+                value=current_rank_display,
                 inline=True,
             )
 
             embed.add_field(
-                name="Chatstreak",
+                name="Miejsce w rankingu",
+                value=f"#{ranking_position}",
+                inline=True,
+            )
+
+            embed.add_field(
+                name="Streak",
                 value=f"🔥 {chatstreak}",
+                inline=True,
+            )
+
+            embed.add_field(
+                name="Mnożnik XP",
+                value=f"×{streak_multiplier:.2f}",
                 inline=True,
             )
 
@@ -1105,13 +1159,13 @@ class DiscordXP(commands.Cog, name="discord_xp"):
 
         embed.add_field(
             name="Aktualna ranga",
-            value=current_rank_name,
+            value=current_rank_display,
             inline=True,
         )
 
         embed.add_field(
             name="Następna ranga",
-            value=next_rank["name"],
+            value=next_rank_display,
             inline=True,
         )
 
@@ -1122,13 +1176,13 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         )
 
         embed.add_field(
-            name="Łączne XP",
-            value=f"{current_xp:,}",
+            name="Ranking",
+            value=f"#{ranking_position}",
             inline=True,
         )
 
         embed.add_field(
-            name="Chatstreak",
+            name="Streak",
             value=f"🔥 {chatstreak}",
             inline=True,
         )
@@ -1143,7 +1197,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
 
         embed.add_field(
             name="Mnożnik XP",
-            value=f"×{streak_multiplier:.1f}",
+            value=f"×{streak_multiplier:.2f}",
             inline=True,
         )
 
