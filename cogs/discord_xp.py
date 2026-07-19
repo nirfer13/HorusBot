@@ -1322,9 +1322,14 @@ class DiscordXP(commands.Cog, name="discord_xp"):
     async def _update_roles_for_users(
         self,
         discord_ids,
+        send_notifications: bool = True,
+        xp_overrides: Optional[Dict[int, int]] = None,
     ) -> None:
         """
-        Assign the correct XP role and notify users about real rank-ups.
+        Assign the correct XP role to selected Discord users.
+
+        xp_overrides can provide XP values for users who do not have
+        a database record, for example 0 XP during a full guild sync.
         """
         if not discord_ids:
             return
@@ -1340,6 +1345,8 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             )
             return
 
+        discord_id_list = list(discord_ids)
+
         rows = await self.bot.pg_con.fetch(
             """
             SELECT
@@ -1348,8 +1355,20 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             FROM chatters_information_discord
             WHERE chtr_id = ANY($1::BIGINT[])
             """,
-            list(discord_ids),
+            discord_id_list,
         )
+
+        xp_by_user = {
+            int(row["chtr_id"]): int(row["xp"])
+            for row in rows
+        }
+
+        if xp_overrides:
+            for discord_id, xp in xp_overrides.items():
+                xp_by_user.setdefault(
+                    int(discord_id),
+                    int(xp),
+                )
 
         configured_role_ids = {
             int(rank["role_id"])
@@ -1357,15 +1376,15 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             if rank.get("role_id")
         }
 
-        for row in rows:
+        for discord_id in discord_id_list:
             member = guild.get_member(
-                row["chtr_id"]
+                discord_id
             )
 
             if member is None:
                 try:
                     member = await guild.fetch_member(
-                        row["chtr_id"]
+                        discord_id
                     )
                 except (
                     discord.NotFound,
@@ -1374,11 +1393,14 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 ):
                     logger.warning(
                         "Could not find guild member %s.",
-                        row["chtr_id"],
+                        discord_id,
                     )
                     continue
 
-            total_xp = int(row["xp"])
+            total_xp = xp_by_user.get(
+                discord_id,
+                0,
+            )
 
             target_rank, _ = self._get_rank_data(
                 total_xp
@@ -1440,7 +1462,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 if roles_to_remove:
                     await member.remove_roles(
                         *roles_to_remove,
-                        reason="Aktualizacja rangi XP",
+                        reason="Synchronizacja rangi XP",
                     )
 
                 if target_role_id is None:
@@ -1456,35 +1478,29 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 if not already_has_target_role:
                     await member.add_roles(
                         target_role,
-                        reason="Osiągnięto próg XP",
+                        reason="Synchronizacja rangi XP",
                     )
 
-                if is_real_rank_up:
+                if (
+                    is_real_rank_up
+                    and send_notifications
+                ):
                     await self._send_level_up_notification(
                         member=member,
                         rank=target_rank,
                         total_xp=total_xp,
                     )
 
-                    logger.info(
-                        "User %s reached XP rank %s "
-                        "with %s total XP.",
-                        member.id,
-                        target_rank.get("name"),
-                        total_xp,
-                    )
-
             except discord.Forbidden:
                 logger.exception(
-                    "Bot cannot update XP roles "
-                    "for user %s.",
+                    "Bot cannot update XP roles for user %s.",
                     member.id,
                 )
 
             except discord.HTTPException:
                 logger.exception(
-                    "Discord error while updating "
-                    "XP roles for user %s.",
+                    "Discord error while updating XP roles "
+                    "for user %s.",
                     member.id,
                 )
 
@@ -2097,25 +2113,56 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         self,
         ctx: commands.Context,
     ) -> None:
-        rows = await self.bot.pg_con.fetch(
-            """
-            SELECT chtr_id
-            FROM chatters_information_discord
-            """
+        guild = self.bot.get_guild(
+            int(self.config["guild_id"])
         )
 
+        if guild is None:
+            await ctx.send(
+                "Nie znaleziono skonfigurowanego serwera."
+            )
+            return
+
+        try:
+            members = [
+                member
+                async for member in guild.fetch_members(
+                    limit=None
+                )
+            ]
+        except discord.Forbidden:
+            logger.exception(
+                "Bot cannot fetch guild members."
+            )
+
+            await ctx.send(
+                "Bot nie ma uprawnień do pobrania listy użytkowników."
+            )
+            return
+
+        human_members = [
+            member
+            for member in members
+            if not member.bot
+        ]
+
         discord_ids = {
-            row["chtr_id"]
-            for row in rows
+            member.id
+            for member in human_members
         }
 
         await self._update_roles_for_users(
-            discord_ids
+            discord_ids=discord_ids,
+            send_notifications=False,
+            xp_overrides={
+                member.id: 0
+                for member in human_members
+            },
         )
 
         await ctx.send(
             f"Zsynchronizowano rangi XP dla "
-            f"**{len(discord_ids)}** użytkowników."
+            f"**{len(human_members)}** użytkowników serwera."
         )
 
 async def setup(bot):
