@@ -47,8 +47,12 @@ DEFAULT_CONFIG = {
     "save_interval_min_seconds": 300,
     "save_interval_max_seconds": 600,
 
-    "streak_bonus_per_day": 0.10,
-    "maximum_streak_bonus": 2.0,
+    "streak_bonus_per_day": 0.02,
+    "maximum_streak_bonus": 3.0,
+
+    "guild_tag_bonus_enabled": True,
+    "guild_tag_bonus_tag": "ANTY",
+    "guild_tag_bonus_multiplier": 0.25,
 
     "role_rewards_enabled": False,
     "guild_id": 686137998177206281,
@@ -324,9 +328,10 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             self.config["message_xp_min"],
             self.config["message_xp_max"],
         )
-        gained_xp = self._apply_streak_bonus(
+        gained_xp = self._apply_xp_multipliers(
             base_xp=base_xp,
             streak=streak,
+            member=member
         )
         await self._add_pending_xp(
             discord_id=discord_id,
@@ -335,13 +340,13 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         )
 
         logger.info(
-            "User %s gained %s XP. Base: %s, streak: %s.",
+            "User %s gained %s XP. Base: %s, streak: %s, ANTY tag: %s.",
             member.name,
             gained_xp,
             base_xp,
             streak,
+            self._has_xp_guild_tag(member),
         )
-
         return True
 
     def _apply_streak_bonus(
@@ -372,6 +377,46 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         )
 
         multiplier = 1 + streak_bonus
+
+        return round(base_xp * multiplier)
+
+    def _apply_xp_multipliers(
+        self,
+        base_xp: int,
+        streak: int,
+        member: Optional[discord.Member] = None,
+    ) -> int:
+        """
+        Apply streak and Discord guild-tag bonuses.
+
+        The maximum streak bonus limits only the streak component.
+        The guild-tag bonus is added separately.
+        """
+        bonus_per_day = float(
+            self.config["streak_bonus_per_day"]
+        )
+
+        maximum_streak_bonus = float(
+            self.config["maximum_streak_bonus"]
+        )
+
+        streak_bonus = min(
+            streak * bonus_per_day,
+            maximum_streak_bonus,
+        )
+
+        guild_tag_bonus = 0.0
+
+        if self._has_xp_guild_tag(member):
+            guild_tag_bonus = float(
+                self.config["guild_tag_bonus_multiplier"]
+            )
+
+        multiplier = (
+            1.0
+            + streak_bonus
+            + guild_tag_bonus
+        )
 
         return round(base_xp * multiplier)
 
@@ -1169,11 +1214,20 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                             username=username,
                         )
 
-                        reaction_xp = self._apply_streak_bonus(
-                            base_xp=self.config[
-                                "reaction_bonus_xp"
-                            ],
+                        guild = self.bot.get_guild(
+                            int(self.config["guild_id"])
+                        )
+
+                        member = (
+                            guild.get_member(discord_id)
+                            if guild is not None
+                            else None
+                        )
+
+                        reaction_xp = self._apply_xp_multipliers(
+                            base_xp=self.config["reaction_bonus_xp"],
                             streak=streak,
+                            member=member,
                         )
 
                         reaction_xp_to_save[
@@ -1658,9 +1712,10 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                             voice_xp_max,
                         )
 
-                        gained_xp = self._apply_streak_bonus(
+                        gained_xp = self._apply_xp_multipliers(
                             base_xp=base_xp,
                             streak=streak,
+                            member=member,
                         )
 
                         await self._add_pending_xp(
@@ -1694,6 +1749,35 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 rewarded_users,
                 total_gained_xp,
             )
+
+    def _has_xp_guild_tag(
+        self,
+        member: Optional[discord.Member],
+    ) -> bool:
+        """
+        Return True when the member displays the configured Discord guild tag.
+        """
+        if member is None:
+            return False
+
+        if not self.config["guild_tag_bonus_enabled"]:
+            return False
+
+        primary_guild = member.primary_guild
+
+        if primary_guild is None:
+            return False
+
+        member_tag = primary_guild.tag
+
+        if not member_tag:
+            return False
+
+        configured_tag = str(
+            self.config["guild_tag_bonus_tag"]
+        )
+
+        return member_tag.casefold() == configured_tag.casefold()
 
     @commands.command(name="xptop")
     async def xp_top(
@@ -1855,7 +1939,18 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 float(self.config["maximum_streak_bonus"]),
             )
 
-            streak_multiplier = 1 + current_streak_bonus
+            guild_tag_bonus = 0.0
+
+            if self._has_xp_guild_tag(target_member):
+                guild_tag_bonus = float(
+                    self.config["guild_tag_bonus_multiplier"]
+                )
+
+            streak_multiplier = (
+                1.0
+                + current_streak_bonus
+                + guild_tag_bonus
+            )
 
             embed = discord.Embed(
                 title=f"XP — {target_member.display_name}",
@@ -1889,9 +1984,19 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 inline=True,
             )
 
+            if guild_tag_bonus > 0:
+                multiplier_description = (
+                    f"×{streak_multiplier:.2f}\n"
+                    f"`+{guild_tag_bonus:.2f} za tag ANTY`"
+                )
+            else:
+                multiplier_description = (
+                    f"×{streak_multiplier:.2f}"
+                )
+
             embed.add_field(
                 name="Mnożnik XP",
-                value=f"×{streak_multiplier:.2f}",
+                value=multiplier_description,
                 inline=True,
             )
 
@@ -1977,11 +2082,32 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             float(self.config["maximum_streak_bonus"]),
         )
 
-        streak_multiplier = 1 + current_streak_bonus
+        guild_tag_bonus = 0.0
+
+        if self._has_xp_guild_tag(target_member):
+            guild_tag_bonus = float(
+                self.config["guild_tag_bonus_multiplier"]
+            )
+
+        streak_multiplier = (
+            1.0
+            + current_streak_bonus
+            + guild_tag_bonus
+        )
+
+        if guild_tag_bonus > 0:
+            multiplier_description = (
+                f"×{streak_multiplier:.2f}\n"
+                f"`+{guild_tag_bonus:.2f} za tag ANTY`"
+            )
+        else:
+            multiplier_description = (
+                f"×{streak_multiplier:.2f}"
+            )
 
         embed.add_field(
             name="Mnożnik XP",
-            value=f"×{streak_multiplier:.2f}",
+            value=multiplier_description,
             inline=True,
         )
 

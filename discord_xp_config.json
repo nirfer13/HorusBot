@@ -16,13 +16,17 @@
     "save_interval_max_seconds": 600,
 
     "streak_bonus_per_day": 0.02,
-    "maximum_streak_bonus": 2.0,
+    "maximum_streak_bonus": 3.0,
+
+    "guild_tag_bonus_enabled": true,
+    "guild_tag_bonus_tag": "ANTY",
+    "guild_tag_bonus_multiplier": 0.25,
 
     "external_xp_enabled": true,
     "external_xp_file": "C:\\Programowanie\\AlterMMO-Bot-RPG\\expSummary.json",
     "external_xp_check_interval_seconds": 10,
 
-    "role_rewards_enabled": false,
+    "role_rewards_enabled": true,
     "guild_id": 686137998177206281,
 
     "xp_bar_length": 20,
