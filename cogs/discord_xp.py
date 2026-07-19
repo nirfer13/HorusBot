@@ -4,6 +4,8 @@ import json
 import logging
 import random
 import time
+import os
+import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,6 +19,17 @@ logger = logging.getLogger(__name__)
 CONFIG_FILE = Path("discord_xp_config.json")
 RANKING_IMAGE_FILE = Path("images/ranking.png")
 
+LEVEL_UP_CHANNEL_ID = 776379796367212594
+
+LEVEL_UP_IMAGE_DIRECTORY = Path(
+    r"C:\Programowanie\HorusBot\images\level_up"
+)
+
+LEVEL_UP_IMAGE_EXTENSIONS = {
+    ".webp",
+    ".gif",
+}
+
 DEFAULT_CONFIG = {
     "message_xp_min": 25,
     "message_xp_max": 40,
@@ -24,6 +37,12 @@ DEFAULT_CONFIG = {
 
     "reaction_bonus_xp": 25,
     "reaction_threshold": 3,
+
+    "voice_xp_enabled": True,
+    "voice_xp_interval_seconds": 300,
+    "voice_xp_min": 10,
+    "voice_xp_max": 20,
+    "voice_require_non_bot_companion": True,
 
     "save_interval_min_seconds": 300,
     "save_interval_max_seconds": 600,
@@ -35,6 +54,10 @@ DEFAULT_CONFIG = {
     "guild_id": 686137998177206281,
 
     "xp_bar_length": 20,
+
+    "external_xp_enabled": True,
+    "external_xp_file": "C:\\Programowanie\\AlterMMO-Bot-RPG\\expSummary.json",
+    "external_xp_check_interval_seconds": 60,
 
     "ranks": [
         # ...
@@ -74,6 +97,10 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         self.streak_lock = asyncio.Lock()
 
         self.flush_task: Optional[asyncio.Task] = None
+        self.voice_xp_task: Optional[asyncio.Task] = None
+
+        self.external_xp_task: Optional[asyncio.Task] = None
+        self.external_xp_lock = asyncio.Lock()
 
     def _load_config(self) -> Dict[str, Any]:
         """
@@ -162,28 +189,62 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             raise ValueError(
                 "maximum_streak_bonus cannot be negative."
             )
+        
+        if config["voice_xp_interval_seconds"] < 10:
+            raise ValueError(
+                "voice_xp_interval_seconds must be at least 10."
+            )
+
+        if config["voice_xp_min"] < 0:
+            raise ValueError(
+                "voice_xp_min cannot be negative."
+            )
+
+        if config["voice_xp_max"] < config["voice_xp_min"]:
+            raise ValueError(
+                "voice_xp_max cannot be lower than voice_xp_min."
+            )
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
         """
-        Start the periodic XP database task.
+        Start periodic Discord XP tasks.
         """
         if self.flush_task is None or self.flush_task.done():
             self.flush_task = self.bot.loop.create_task(
                 self._xp_flush_loop()
             )
-            logger.info("Discord XP task started.")
+            logger.info("Discord XP flush task started.")
 
-    def cog_unload(self) -> None:
-        """
-        Cancel the background task and schedule a final XP save.
-        """
-        if self.flush_task is not None:
-            self.flush_task.cancel()
+        if (
+            self.config["voice_xp_enabled"]
+            and (
+                self.voice_xp_task is None
+                or self.voice_xp_task.done()
+            )
+        ):
+            self.voice_xp_task = self.bot.loop.create_task(
+                self._voice_xp_loop()
+            )
+            logger.info(
+                "Discord voice XP task started. Interval: %s seconds.",
+                self.config["voice_xp_interval_seconds"],
+            )
 
-        if not self.bot.is_closed():
-            self.bot.loop.create_task(
-                self.flush_pending_xp()
+        if (
+            self.config["external_xp_enabled"]
+            and (
+                self.external_xp_task is None
+                or self.external_xp_task.done()
+            )
+        ):
+            self.external_xp_task = self.bot.loop.create_task(
+                self._external_xp_loop()
+            )
+
+            logger.info(
+                "External XP import task started. Interval: %s seconds.",
+                self.config["external_xp_check_interval_seconds"],
             )
 
     @commands.Cog.listener()
@@ -204,6 +265,24 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         await self._try_grant_message_xp(
             message.author
         )
+
+    def cog_unload(self) -> None:
+        """
+        Cancel background tasks and schedule a final XP save.
+        """
+        if self.flush_task is not None:
+            self.flush_task.cancel()
+
+        if self.voice_xp_task is not None:
+            self.voice_xp_task.cancel()
+
+        if not self.bot.is_closed():
+            self.bot.loop.create_task(
+                self.flush_pending_xp()
+            )
+
+        if self.external_xp_task is not None:
+            self.external_xp_task.cancel()
 
     async def _try_grant_message_xp(
         self,
@@ -365,6 +444,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                         )
 
                         current_streak = int(current_streak or 0)
+                        previous_streak = current_streak
 
                         if activity_row is None:
                             new_streak = 1
@@ -415,6 +495,24 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                     new_streak,
                 )
 
+                streak_was_incremented = (
+                    new_streak > previous_streak
+                )
+
+                reached_streak_milestone = (
+                    new_streak > 0
+                    and new_streak % 10 == 0
+                )
+
+                if (
+                    streak_was_incremented
+                    and reached_streak_milestone
+                ):
+                    await self._send_streak_milestone_notification(
+                        username=username,
+                        streak=new_streak,
+                    )
+
                 return new_streak
 
             except Exception:
@@ -439,6 +537,477 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         async with self.pending_lock:
             self.pending_xp[discord_id] += gained_xp
             self.pending_usernames[discord_id] = username
+
+    async def _external_xp_loop(self) -> None:
+        """
+        Periodically import XP generated by another bot.
+        """
+        interval = int(
+            self.config["external_xp_check_interval_seconds"]
+        )
+
+        while not self.bot.is_closed():
+            try:
+                await asyncio.sleep(interval)
+
+                if not self.config["external_xp_enabled"]:
+                    continue
+
+                await self.import_external_xp()
+
+            except asyncio.CancelledError:
+                break
+
+            except Exception:
+                logger.exception(
+                    "Unexpected error in the external XP import loop."
+                )
+
+    async def import_external_xp(self) -> None:
+        """
+        Import XP from expSummary.json.
+
+        The source file is moved to a processing file before it is read.
+        This reduces the risk of deleting XP written concurrently by
+        another bot.
+        """
+        async with self.external_xp_lock:
+            source_file = Path(
+                self.config["external_xp_file"]
+            )
+
+            # First retry files left after an earlier database failure.
+            processing_files = sorted(
+                source_file.parent.glob(
+                    f"{source_file.stem}.processing.*{source_file.suffix}"
+                )
+            )
+
+            if processing_files:
+                for processing_file in processing_files:
+                    await self._process_external_xp_file(
+                        processing_file
+                    )
+
+            if not source_file.exists():
+                self._create_empty_external_xp_file(source_file)
+                return
+
+            try:
+                if source_file.stat().st_size == 0:
+                    return
+            except OSError:
+                logger.exception(
+                    "Could not inspect external XP file: %s.",
+                    source_file,
+                )
+                return
+
+            processing_file = source_file.with_name(
+                f"{source_file.stem}.processing."
+                f"{uuid.uuid4().hex}{source_file.suffix}"
+            )
+
+            try:
+                # Atomic rename when both paths are on the same filesystem.
+                os.replace(
+                    source_file,
+                    processing_file,
+                )
+            except FileNotFoundError:
+                # The other process may have changed the file meanwhile.
+                return
+            except OSError:
+                logger.exception(
+                    "Could not claim external XP file: %s.",
+                    source_file,
+                )
+                return
+
+            # Create a new empty source only if another process has not
+            # already recreated it.
+            self._create_empty_external_xp_file(source_file)
+
+            await self._process_external_xp_file(
+                processing_file
+            )
+
+    async def _send_streak_milestone_notification(
+        self,
+        username: str,
+        streak: int,
+    ) -> None:
+        """
+        Send a simple notification after reaching each 10-streak milestone.
+
+        The username is displayed as plain text, without pinging the user.
+        """
+        channel = self.bot.get_channel(
+            LEVEL_UP_CHANNEL_ID
+        )
+
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(
+                    LEVEL_UP_CHANNEL_ID
+                )
+            except (
+                discord.NotFound,
+                discord.Forbidden,
+                discord.HTTPException,
+            ):
+                logger.exception(
+                    "Could not find streak notification channel %s.",
+                    LEVEL_UP_CHANNEL_ID,
+                )
+                return
+
+        try:
+            await channel.send(
+                f"🔥 **{discord.utils.escape_markdown(username)}** "
+                f"osiągnął **{streak} dni streaka**!",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
+        except discord.Forbidden:
+            logger.exception(
+                "Bot cannot send streak notification "
+                "in channel %s.",
+                LEVEL_UP_CHANNEL_ID,
+            )
+
+        except discord.HTTPException:
+            logger.exception(
+                "Could not send streak notification "
+                "for user %s.",
+                username,
+            )
+
+    async def _send_level_up_notification(
+        self,
+        member: discord.Member,
+        rank: Dict[str, Any],
+        total_xp: int,
+    ) -> None:
+        """
+        Send a level-up notification with a random GIF or WEBP image.
+        """
+        channel = self.bot.get_channel(
+            LEVEL_UP_CHANNEL_ID
+        )
+
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(
+                    LEVEL_UP_CHANNEL_ID
+                )
+            except (
+                discord.NotFound,
+                discord.Forbidden,
+                discord.HTTPException,
+            ):
+                logger.exception(
+                    "Could not find level-up channel %s.",
+                    LEVEL_UP_CHANNEL_ID,
+                )
+                return
+
+        role_id = rank.get("role_id")
+        rank_name = str(
+            rank.get("name", "Nieznana ranga")
+        )
+
+        rank_display = (
+            f"<@&{int(role_id)}>"
+            if role_id
+            else rank_name
+        )
+
+        embed = discord.Embed(
+            title="Awans!",
+            description=(
+                f"{member.mention} osiąga nową rangę!\n\n"
+                f"**Nowa ranga:** {rank_display}\n"
+                f"**Łączne XP:** {total_xp:,}"
+            ),
+            color=0xD9A441,
+        )
+
+        embed.set_thumbnail(
+            url=member.display_avatar.url
+        )
+
+        embed.set_footer(
+            text="Gratulacje! Kolejny etap został osiągnięty."
+        )
+
+        image_files = []
+
+        if LEVEL_UP_IMAGE_DIRECTORY.exists():
+            image_files = [
+                file_path
+                for file_path in LEVEL_UP_IMAGE_DIRECTORY.iterdir()
+                if (
+                    file_path.is_file()
+                    and file_path.suffix.lower()
+                    in LEVEL_UP_IMAGE_EXTENSIONS
+                )
+            ]
+        else:
+            logger.warning(
+                "Level-up image directory does not exist: %s",
+                LEVEL_UP_IMAGE_DIRECTORY,
+            )
+
+        try:
+            if image_files:
+                selected_image = random.choice(
+                    image_files
+                )
+
+                attachment_name = (
+                    f"level_up{selected_image.suffix.lower()}"
+                )
+
+                image_attachment = discord.File(
+                    selected_image,
+                    filename=attachment_name,
+                )
+
+                embed.set_image(
+                    url=f"attachment://{attachment_name}"
+                )
+
+                await channel.send(
+                    embed=embed,
+                    file=image_attachment,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            else:
+                await channel.send(
+                    embed=embed,
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+
+        except discord.Forbidden:
+            logger.exception(
+                "Bot cannot send level-up notification "
+                "in channel %s.",
+                LEVEL_UP_CHANNEL_ID,
+            )
+
+        except discord.HTTPException:
+            logger.exception(
+                "Discord error while sending level-up "
+                "notification for user %s.",
+                member.id,
+            )
+
+    def _get_highest_member_xp_rank(
+        self,
+        member: discord.Member,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Return the highest configured XP rank currently held by the member.
+        """
+        member_role_ids = {
+            role.id
+            for role in member.roles
+        }
+
+        held_ranks = [
+            rank
+            for rank in self.config["ranks"]
+            if (
+                rank.get("role_id")
+                and int(rank["role_id"]) in member_role_ids
+            )
+        ]
+
+        if not held_ranks:
+            return None
+
+        return max(
+            held_ranks,
+            key=lambda rank: int(
+                rank["required_xp"]
+            ),
+        )
+
+    @staticmethod
+    def _create_empty_external_xp_file(
+        file_path: Path,
+    ) -> None:
+        """
+        Create an empty JSON object only when the file does not exist.
+
+        The exclusive creation mode prevents overwriting a newly created
+        file containing XP from the other bot.
+        """
+        try:
+            file_path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            with file_path.open(
+                "x",
+                encoding="utf-8",
+            ) as file:
+                json.dump({}, file)
+
+        except FileExistsError:
+            pass
+
+    async def _process_external_xp_file(
+        self,
+        processing_file: Path,
+    ) -> None:
+        """
+        Validate and save XP from one claimed processing file.
+
+        The file is deleted only after a successful database transaction.
+        On failure it remains on disk and will be retried later.
+        """
+        try:
+            with processing_file.open(
+                "r",
+                encoding="utf-8",
+            ) as file:
+                raw_data = json.load(file)
+
+        except json.JSONDecodeError:
+            logger.exception(
+                "External XP file contains invalid JSON: %s.",
+                processing_file,
+            )
+            return
+
+        except OSError:
+            logger.exception(
+                "Could not read external XP file: %s.",
+                processing_file,
+            )
+            return
+
+        if not isinstance(raw_data, dict):
+            logger.error(
+                "External XP file must contain a JSON object: %s.",
+                processing_file,
+            )
+            return
+
+        xp_by_user: Dict[int, int] = defaultdict(int)
+
+        for raw_discord_id, raw_xp in raw_data.items():
+            try:
+                discord_id = int(raw_discord_id)
+                gained_xp = int(raw_xp)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Ignoring invalid external XP entry: id=%r, xp=%r.",
+                    raw_discord_id,
+                    raw_xp,
+                )
+                continue
+
+            if discord_id <= 0:
+                logger.warning(
+                    "Ignoring invalid Discord ID: %s.",
+                    discord_id,
+                )
+                continue
+
+            if gained_xp <= 0:
+                continue
+
+            xp_by_user[discord_id] += gained_xp
+
+        if not xp_by_user:
+            try:
+                processing_file.unlink()
+            except OSError:
+                logger.exception(
+                    "Could not remove empty processing file: %s.",
+                    processing_file,
+                )
+            return
+
+        guild = self.bot.get_guild(
+            int(self.config["guild_id"])
+        )
+
+        records = []
+
+        for discord_id, gained_xp in xp_by_user.items():
+            member = (
+                guild.get_member(discord_id)
+                if guild is not None
+                else None
+            )
+
+            username = (
+                member.name
+                if member is not None
+                else str(discord_id)
+            )
+
+            records.append(
+                (
+                    discord_id,
+                    username,
+                    gained_xp,
+                )
+            )
+
+        try:
+            async with self.bot.pg_con.acquire() as connection:
+                async with connection.transaction():
+                    await connection.executemany(
+                        """
+                        INSERT INTO chatters_information_discord (
+                            chtr_id,
+                            chtr_name,
+                            xp,
+                            chatstreak
+                        )
+                        VALUES ($1, $2, $3, 0)
+                        ON CONFLICT (chtr_id)
+                        DO UPDATE SET
+                            chtr_name = CASE
+                                WHEN EXCLUDED.chtr_name
+                                    = EXCLUDED.chtr_id::TEXT
+                                    THEN chatters_information_discord.chtr_name
+                                ELSE EXCLUDED.chtr_name
+                            END,
+                            xp = (
+                                chatters_information_discord.xp
+                                + EXCLUDED.xp
+                            )
+                        """,
+                        records,
+                    )
+
+            processing_file.unlink()
+
+            logger.info(
+                "Imported external XP for %s users. Total XP: %s.",
+                len(xp_by_user),
+                sum(xp_by_user.values()),
+            )
+
+        except Exception:
+            logger.exception(
+                "Could not import external XP from %s. "
+                "The processing file was preserved for retry.",
+                processing_file,
+            )
+            return
+
+        if self.config["role_rewards_enabled"]:
+            await self._update_roles_for_users(
+                set(xp_by_user.keys())
+            )
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(
@@ -755,9 +1324,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         discord_ids,
     ) -> None:
         """
-        Assign the highest unlocked XP role and remove old XP roles.
-
-        This method runs only when role_rewards_enabled is true.
+        Assign the correct XP role and notify users about real rank-ups.
         """
         if not discord_ids:
             return
@@ -776,20 +1343,12 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         rows = await self.bot.pg_con.fetch(
             """
             SELECT
-                info.chtr_id,
-                info.chtr_name,
-                info.xp,
-                CASE
-                    WHEN activity.last_active_date >= CURRENT_DATE - 1
-                        THEN info.chatstreak
-                    ELSE 0
-                END AS chatstreak
-            FROM chatters_information_discord AS info
-            LEFT JOIN discord_chat_activity AS activity
-                ON activity.chtr_id = info.chtr_id
-            ORDER BY info.xp DESC, info.chtr_id ASC
-            LIMIT 10
-            """
+                chtr_id,
+                xp
+            FROM chatters_information_discord
+            WHERE chtr_id = ANY($1::BIGINT[])
+            """,
+            list(discord_ids),
         )
 
         configured_role_ids = {
@@ -804,17 +1363,51 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             )
 
             if member is None:
-                continue
+                try:
+                    member = await guild.fetch_member(
+                        row["chtr_id"]
+                    )
+                except (
+                    discord.NotFound,
+                    discord.Forbidden,
+                    discord.HTTPException,
+                ):
+                    logger.warning(
+                        "Could not find guild member %s.",
+                        row["chtr_id"],
+                    )
+                    continue
 
-            current_rank, _ = self._get_rank_data(
-                row["xp"]
+            total_xp = int(row["xp"])
+
+            target_rank, _ = self._get_rank_data(
+                total_xp
+            )
+
+            previous_rank = self._get_highest_member_xp_rank(
+                member
+            )
+
+            previous_threshold = (
+                int(previous_rank["required_xp"])
+                if previous_rank is not None
+                else -1
+            )
+
+            target_threshold = (
+                int(target_rank["required_xp"])
+                if target_rank is not None
+                else -1
             )
 
             target_role_id = None
 
-            if current_rank is not None:
+            if (
+                target_rank is not None
+                and target_rank.get("role_id")
+            ):
                 target_role_id = int(
-                    current_rank["role_id"]
+                    target_rank["role_id"]
                 )
 
             roles_to_remove = [
@@ -826,46 +1419,72 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 )
             ]
 
-            if roles_to_remove:
-                try:
+            target_role = (
+                guild.get_role(target_role_id)
+                if target_role_id is not None
+                else None
+            )
+
+            already_has_target_role = (
+                target_role is not None
+                and target_role in member.roles
+            )
+
+            is_real_rank_up = (
+                target_rank is not None
+                and target_threshold > previous_threshold
+                and not already_has_target_role
+            )
+
+            try:
+                if roles_to_remove:
                     await member.remove_roles(
                         *roles_to_remove,
                         reason="Aktualizacja rangi XP",
                     )
-                except discord.HTTPException:
-                    logger.exception(
-                        "Could not remove old XP roles "
-                        "from user %s.",
-                        member.id,
+
+                if target_role_id is None:
+                    continue
+
+                if target_role is None:
+                    logger.warning(
+                        "XP role %s was not found.",
+                        target_role_id,
+                    )
+                    continue
+
+                if not already_has_target_role:
+                    await member.add_roles(
+                        target_role,
+                        reason="Osiągnięto próg XP",
                     )
 
-            if target_role_id is None:
-                continue
+                if is_real_rank_up:
+                    await self._send_level_up_notification(
+                        member=member,
+                        rank=target_rank,
+                        total_xp=total_xp,
+                    )
 
-            target_role = guild.get_role(
-                target_role_id
-            )
+                    logger.info(
+                        "User %s reached XP rank %s "
+                        "with %s total XP.",
+                        member.id,
+                        target_rank.get("name"),
+                        total_xp,
+                    )
 
-            if target_role is None:
-                logger.warning(
-                    "XP role %s was not found.",
-                    target_role_id,
+            except discord.Forbidden:
+                logger.exception(
+                    "Bot cannot update XP roles "
+                    "for user %s.",
+                    member.id,
                 )
-                continue
 
-            if target_role in member.roles:
-                continue
-
-            try:
-                await member.add_roles(
-                    target_role,
-                    reason="Osiągnięto próg XP",
-                )
             except discord.HTTPException:
                 logger.exception(
-                    "Could not add XP role %s "
-                    "to user %s.",
-                    target_role_id,
+                    "Discord error while updating "
+                    "XP roles for user %s.",
                     member.id,
                 )
 
@@ -910,6 +1529,155 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             "█" * filled_length
             + "░" * empty_length
         )
+    
+    def _is_eligible_for_voice_xp(
+        self,
+        member: discord.Member,
+    ) -> bool:
+        """
+        Return True when the member can receive voice XP.
+
+        The member:
+        - must not be a bot,
+        - must be connected to a voice or stage channel,
+        - must not be deafened,
+        - must have at least one non-bot companion.
+
+        Microphone mute does not prevent earning XP.
+        """
+        if member.bot:
+            return False
+
+        voice_state = member.voice
+
+        if voice_state is None:
+            return False
+
+        channel = voice_state.channel
+
+        if channel is None:
+            return False
+
+        # Server deafened or self-deafened users cannot receive voice XP.
+        if voice_state.deaf or voice_state.self_deaf:
+            return False
+
+        # Do not count users waiting in the guild AFK channel.
+        if voice_state.afk:
+            return False
+
+        human_members = [
+            channel_member
+            for channel_member in channel.members
+            if not channel_member.bot
+        ]
+
+        if self.config["voice_require_non_bot_companion"]:
+            return len(human_members) >= 2
+
+        return len(channel.members) >= 1
+    
+    async def _voice_xp_loop(self) -> None:
+        """
+        Grant voice XP to eligible users at the configured interval.
+        """
+        interval = int(
+            self.config["voice_xp_interval_seconds"]
+        )
+
+        while not self.bot.is_closed():
+            try:
+                # Users must remain eligible until the next five-minute tick.
+                await asyncio.sleep(interval)
+
+                if not self.config["voice_xp_enabled"]:
+                    continue
+
+                await self._grant_voice_xp()
+
+            except asyncio.CancelledError:
+                break
+
+            except Exception:
+                logger.exception(
+                    "Unexpected error in the Discord voice XP loop."
+                )
+
+    async def _grant_voice_xp(self) -> None:
+        """
+        Grant voice XP to all currently eligible guild members.
+        """
+        rewarded_users = 0
+        total_gained_xp = 0
+        processed_user_ids = set()
+
+        voice_xp_min = int(
+            self.config["voice_xp_min"]
+        )
+
+        voice_xp_max = int(
+            self.config["voice_xp_max"]
+        )
+
+        for guild in self.bot.guilds:
+            for channel in guild.voice_channels:
+                for member in channel.members:
+                    # Prevent accidental duplicate processing.
+                    if member.id in processed_user_ids:
+                        continue
+
+                    if not self._is_eligible_for_voice_xp(member):
+                        continue
+
+                    processed_user_ids.add(member.id)
+
+                    try:
+                        streak = await self._get_or_update_chatstreak(
+                            discord_id=member.id,
+                            username=member.name,
+                        )
+
+                        base_xp = random.randint(
+                            voice_xp_min,
+                            voice_xp_max,
+                        )
+
+                        gained_xp = self._apply_streak_bonus(
+                            base_xp=base_xp,
+                            streak=streak,
+                        )
+
+                        await self._add_pending_xp(
+                            discord_id=member.id,
+                            username=member.name,
+                            gained_xp=gained_xp,
+                        )
+
+                        rewarded_users += 1
+                        total_gained_xp += gained_xp
+
+                        logger.info(
+                            "User %s gained %s voice XP. "
+                            "Base: %s, streak: %s, channel: %s.",
+                            member.name,
+                            gained_xp,
+                            base_xp,
+                            streak,
+                            channel.name,
+                        )
+
+                    except Exception:
+                        logger.exception(
+                            "Could not grant voice XP to user %s.",
+                            member.id,
+                        )
+
+        if rewarded_users:
+            logger.info(
+                "Voice XP tick completed. Users: %s, total XP: %s.",
+                rewarded_users,
+                total_gained_xp,
+            )
 
     @commands.command(name="xptop")
     async def xp_top(
@@ -1218,6 +1986,137 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             "Zapisano oczekujący EXP użytkowników."
         )
 
+    @commands.command(name="importexternalxp")
+    @commands.has_permissions(administrator=True)
+    async def import_external_xp_command(
+        self,
+        ctx: commands.Context,
+    ) -> None:
+        """
+        Manually import XP from the external JSON file.
+        """
+        await self.import_external_xp()
+
+        await ctx.send(
+            "Zakończono próbę importu zewnętrznego XP."
+        )
+
+    @commands.command(name="addxp")
+    @commands.has_permissions(administrator=True)
+    async def add_xp(
+        self,
+        ctx: commands.Context,
+        discord_id: int,
+        amount: int,
+    ) -> None:
+        """
+        Add a specific amount of XP to a Discord user.
+
+        Usage:
+        $addxp 291836779495948288 500
+        """
+        if amount <= 0:
+            await ctx.send(
+                "Ilość XP musi być większa od zera."
+            )
+            return
+
+        guild = ctx.guild
+        member = (
+            guild.get_member(discord_id)
+            if guild is not None
+            else None
+        )
+
+        username = (
+            member.name
+            if member is not None
+            else str(discord_id)
+        )
+
+        try:
+            async with self.bot.pg_con.acquire() as connection:
+                async with connection.transaction():
+                    await connection.execute(
+                        """
+                        INSERT INTO chatters_information_discord (
+                            chtr_id,
+                            chtr_name,
+                            xp,
+                            chatstreak
+                        )
+                        VALUES ($1, $2, $3, 0)
+                        ON CONFLICT (chtr_id)
+                        DO UPDATE SET
+                            chtr_name = CASE
+                                WHEN EXCLUDED.chtr_name
+                                    = EXCLUDED.chtr_id::TEXT
+                                    THEN chatters_information_discord.chtr_name
+                                ELSE EXCLUDED.chtr_name
+                            END,
+                            xp = (
+                                chatters_information_discord.xp
+                                + EXCLUDED.xp
+                            )
+                        """,
+                        discord_id,
+                        username,
+                        amount,
+                    )
+
+            if self.config["role_rewards_enabled"]:
+                await self._update_roles_for_users(
+                    {discord_id}
+                )
+
+            await ctx.send(
+                f"Dodano **{amount:,} XP** użytkownikowi "
+                f"<@{discord_id}>."
+            )
+
+            logger.info(
+                "Administrator %s added %s XP to user %s.",
+                ctx.author.id,
+                amount,
+                discord_id,
+            )
+
+        except Exception:
+            logger.exception(
+                "Could not manually add XP to user %s.",
+                discord_id,
+            )
+
+            await ctx.send(
+                "Nie udało się dodać XP. Sprawdź logi bota."
+            )
+
+    @commands.command(name="syncxproles")
+    @commands.has_permissions(administrator=True)
+    async def sync_xp_roles(
+        self,
+        ctx: commands.Context,
+    ) -> None:
+        rows = await self.bot.pg_con.fetch(
+            """
+            SELECT chtr_id
+            FROM chatters_information_discord
+            """
+        )
+
+        discord_ids = {
+            row["chtr_id"]
+            for row in rows
+        }
+
+        await self._update_roles_for_users(
+            discord_ids
+        )
+
+        await ctx.send(
+            f"Zsynchronizowano rangi XP dla "
+            f"**{len(discord_ids)}** użytkowników."
+        )
 
 async def setup(bot):
     await bot.add_cog(DiscordXP(bot))

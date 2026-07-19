@@ -13,7 +13,9 @@ from globals.globalvariables import DebugMode
 load_dotenv()
 description = 'AlterMMO Discord Horus Bot, Development in progres'
 intents = discord.Intents.all()
+intents.message_content = True
 intents.members = True
+intents.voice_states = True
 
 logging.basicConfig(
 level=logging.INFO,

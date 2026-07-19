@@ -6,11 +6,21 @@
     "reaction_bonus_xp": 25,
     "reaction_threshold": 3,
 
+    "voice_xp_enabled": true,
+    "voice_xp_interval_seconds": 300,
+    "voice_xp_min": 15,
+    "voice_xp_max": 30,
+    "voice_require_non_bot_companion": false,
+
     "save_interval_min_seconds": 300,
     "save_interval_max_seconds": 600,
 
     "streak_bonus_per_day": 0.02,
     "maximum_streak_bonus": 2.0,
+
+    "external_xp_enabled": true,
+    "external_xp_file": "C:\\Programowanie\\AlterMMO-Bot-RPG\\expSummary.json",
+    "external_xp_check_interval_seconds": 10,
 
     "role_rewards_enabled": false,
     "guild_id": 686137998177206281,
