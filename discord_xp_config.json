@@ -22,6 +22,10 @@
     "guild_tag_bonus_tag": "ANTY",
     "guild_tag_bonus_multiplier": 0.25,
 
+    "voice_group_bonus_enabled": true,
+    "voice_group_bonus_min_members": 2,
+    "voice_group_bonus_per_member_above_one": 0.20,
+
     "external_xp_enabled": true,
     "external_xp_file": "C:\\Programowanie\\AlterMMO-Bot-RPG\\expSummary.json",
     "external_xp_check_interval_seconds": 10,

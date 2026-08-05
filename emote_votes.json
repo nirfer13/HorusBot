@@ -174,5 +174,16 @@
     "source_message_id": 1501489355397795912,
     "created_ts": 1778053361.017543,
     "status": "finished"
+  },
+  "1532987809432998049": {
+    "vote_message_id": 1532987809432998049,
+    "guild_id": 686137998177206281,
+    "channel_id": 1059731255786229770,
+    "author_id": 291836779495948288,
+    "emoji_name": "peepohotsweat",
+    "image_path": "emote_uploads/1532987802155745280_peepohotsweat.gif",
+    "source_message_id": 1532987802155745280,
+    "created_ts": 1785563176.017895,
+    "status": "finished"
   }
 }

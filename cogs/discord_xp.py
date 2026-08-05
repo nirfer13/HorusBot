@@ -54,6 +54,10 @@ DEFAULT_CONFIG = {
     "guild_tag_bonus_tag": "ANTY",
     "guild_tag_bonus_multiplier": 0.25,
 
+    "voice_group_bonus_enabled": True,
+    "voice_group_bonus_min_members": 3,
+    "voice_group_bonus_per_member_above_one": 0.20,
+
     "role_rewards_enabled": False,
     "guild_id": 686137998177206281,
 
@@ -105,6 +109,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
 
         self.external_xp_task: Optional[asyncio.Task] = None
         self.external_xp_lock = asyncio.Lock()
+        self.voice_group_bonus_state: Dict[int, int] = {}
 
     def _load_config(self) -> Dict[str, Any]:
         """
@@ -385,12 +390,13 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         base_xp: int,
         streak: int,
         member: Optional[discord.Member] = None,
+        additional_bonus: float = 0.0,
     ) -> int:
         """
-        Apply streak and Discord guild-tag bonuses.
+        Apply streak, guild-tag and optional additional XP bonuses.
 
-        The maximum streak bonus limits only the streak component.
-        The guild-tag bonus is added separately.
+        Bonuses are additive:
+        x1.00 + streak bonus + guild-tag bonus + additional bonus.
         """
         bonus_per_day = float(
             self.config["streak_bonus_per_day"]
@@ -416,9 +422,37 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             1.0
             + streak_bonus
             + guild_tag_bonus
+            + max(0.0, additional_bonus)
         )
 
         return round(base_xp * multiplier)
+    
+    def _is_active_voice_member(
+    self,
+    member: discord.Member,
+    ) -> bool:
+        """
+        Check whether a member can count toward voice XP and group bonuses.
+        """
+        if member.bot:
+            return False
+
+        voice_state = member.voice
+
+        if voice_state is None:
+            return False
+
+        if voice_state.channel is None:
+            return False
+
+        # Muted microphone is allowed, deafened audio is not.
+        if voice_state.deaf or voice_state.self_deaf:
+            return False
+
+        if voice_state.afk:
+            return False
+
+        return True
 
     async def _get_or_update_chatstreak(
         self,
@@ -1600,53 +1634,100 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             + "░" * empty_length
         )
     
-    def _is_eligible_for_voice_xp(
+    def _get_voice_group_bonus(
         self,
-        member: discord.Member,
-    ) -> bool:
+        eligible_member_count: int,
+    ) -> float:
         """
-        Return True when the member can receive voice XP.
+        Calculate the voice group bonus.
 
-        The member:
-        - must not be a bot,
-        - must be connected to a voice or stage channel,
-        - must not be deafened,
-        - must have at least one non-bot companion.
-
-        Microphone mute does not prevent earning XP.
+        Example with 20% per member above one:
+        2 members = 0%
+        3 members = 40%
+        4 members = 60%
         """
-        if member.bot:
-            return False
+        if not self.config["voice_group_bonus_enabled"]:
+            return 0.0
 
-        voice_state = member.voice
+        minimum_members = int(
+            self.config["voice_group_bonus_min_members"]
+        )
 
-        if voice_state is None:
-            return False
+        if eligible_member_count < minimum_members:
+            return 0.0
 
-        channel = voice_state.channel
+        bonus_per_member = float(
+            self.config[
+                "voice_group_bonus_per_member_above_one"
+            ]
+        )
 
-        if channel is None:
-            return False
-
-        # Server deafened or self-deafened users cannot receive voice XP.
-        if voice_state.deaf or voice_state.self_deaf:
-            return False
-
-        # Do not count users waiting in the guild AFK channel.
-        if voice_state.afk:
-            return False
-
-        human_members = [
-            channel_member
-            for channel_member in channel.members
-            if not channel_member.bot
-        ]
-
-        if self.config["voice_require_non_bot_companion"]:
-            return len(human_members) >= 2
-
-        return len(channel.members) >= 1
+        return (
+            eligible_member_count - 1
+        ) * bonus_per_member
     
+    async def _send_voice_group_bonus_notification(
+        self,
+        channel: discord.abc.GuildChannel,
+        member_count: int,
+        group_bonus: float,
+    ) -> None:
+        """
+        Announce a newly activated or increased voice group bonus.
+        """
+        leveling_channel = self.bot.get_channel(
+            LEVEL_UP_CHANNEL_ID
+        )
+
+        if leveling_channel is None:
+            try:
+                leveling_channel = await self.bot.fetch_channel(
+                    LEVEL_UP_CHANNEL_ID
+                )
+            except (
+                discord.NotFound,
+                discord.Forbidden,
+                discord.HTTPException,
+            ):
+                logger.exception(
+                    "Could not find voice bonus notification channel %s.",
+                    LEVEL_UP_CHANNEL_ID,
+                )
+                return
+
+        bonus_percent = round(group_bonus * 100)
+
+        embed = discord.Embed(
+            title="Premia grupowa na kanale głosowym!",
+            description=(
+                f"Na kanale {channel.mention} znajduje się "
+                f"**{member_count} aktywnych użytkowników**.\n\n"
+                f"Aktywowano premię **+{bonus_percent}% XP** "
+                "za aktywność głosową."
+            ),
+            color=0x57F287,
+        )
+
+        try:
+            await leveling_channel.send(
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
+        except discord.Forbidden:
+            logger.exception(
+                "Bot cannot send voice group bonus notification "
+                "in channel %s.",
+                LEVEL_UP_CHANNEL_ID,
+            )
+
+        except discord.HTTPException:
+            logger.exception(
+                "Could not send voice bonus notification "
+                "for voice channel %s.",
+                channel.id,
+            )
+
     async def _voice_xp_loop(self) -> None:
         """
         Grant voice XP to eligible users at the configured interval.
@@ -1675,11 +1756,11 @@ class DiscordXP(commands.Cog, name="discord_xp"):
 
     async def _grant_voice_xp(self) -> None:
         """
-        Grant voice XP to all currently eligible guild members.
+        Grant voice XP and apply group bonuses per voice channel.
         """
         rewarded_users = 0
         total_gained_xp = 0
-        processed_user_ids = set()
+        currently_scanned_channel_ids = set()
 
         voice_xp_min = int(
             self.config["voice_xp_min"]
@@ -1690,17 +1771,68 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         )
 
         for guild in self.bot.guilds:
-            for channel in guild.voice_channels:
-                for member in channel.members:
-                    # Prevent accidental duplicate processing.
-                    if member.id in processed_user_ids:
-                        continue
+            voice_channels = [
+                *guild.voice_channels,
+                *guild.stage_channels,
+            ]
 
-                    if not self._is_eligible_for_voice_xp(member):
-                        continue
+            for channel in voice_channels:
+                currently_scanned_channel_ids.add(
+                    channel.id
+                )
 
-                    processed_user_ids.add(member.id)
+                eligible_members = [
+                    member
+                    for member in channel.members
+                    if self._is_active_voice_member(member)
+                ]
 
+                eligible_member_count = len(
+                    eligible_members
+                )
+
+                # At least two eligible people are required for voice XP.
+                if eligible_member_count == 0:
+                    self.voice_group_bonus_state[
+                        channel.id
+                    ] = 0
+                    continue
+
+                group_bonus = self._get_voice_group_bonus(
+                    eligible_member_count
+                )
+
+                previous_member_count = (
+                    self.voice_group_bonus_state.get(
+                        channel.id,
+                        0,
+                    )
+                )
+
+                previous_group_bonus = (
+                    self._get_voice_group_bonus(
+                        previous_member_count
+                    )
+                )
+
+                # Notify only when a new or higher bonus becomes active.
+                if (
+                    group_bonus > 0
+                    and group_bonus > previous_group_bonus
+                ):
+                    await self._send_voice_group_bonus_notification(
+                        channel=channel,
+                        member_count=eligible_member_count,
+                        group_bonus=group_bonus,
+                    )
+
+                # Update state even when the bonus decreases.
+                # This allows a future increase to trigger again.
+                self.voice_group_bonus_state[
+                    channel.id
+                ] = eligible_member_count
+
+                for member in eligible_members:
                     try:
                         streak = await self._get_or_update_chatstreak(
                             discord_id=member.id,
@@ -1716,6 +1848,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                             base_xp=base_xp,
                             streak=streak,
                             member=member,
+                            additional_bonus=group_bonus,
                         )
 
                         await self._add_pending_xp(
@@ -1729,11 +1862,15 @@ class DiscordXP(commands.Cog, name="discord_xp"):
 
                         logger.info(
                             "User %s gained %s voice XP. "
-                            "Base: %s, streak: %s, channel: %s.",
+                            "Base: %s, streak: %s, "
+                            "members: %s, group bonus: +%.0f%%, "
+                            "channel: %s.",
                             member.name,
                             gained_xp,
                             base_xp,
                             streak,
+                            eligible_member_count,
+                            group_bonus * 100,
                             channel.name,
                         )
 
@@ -1743,13 +1880,24 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                             member.id,
                         )
 
+        # Remove stale channels that no longer exist or are unavailable.
+        stale_channel_ids = (
+            set(self.voice_group_bonus_state)
+            - currently_scanned_channel_ids
+        )
+
+        for channel_id in stale_channel_ids:
+            self.voice_group_bonus_state.pop(
+                channel_id,
+                None,
+            )
+
         if rewarded_users:
             logger.info(
                 "Voice XP tick completed. Users: %s, total XP: %s.",
                 rewarded_users,
                 total_gained_xp,
             )
-
     def _has_xp_guild_tag(
         self,
         member: Optional[discord.Member],
