@@ -12,6 +12,10 @@
     "voice_xp_max": 30,
     "voice_require_non_bot_companion": false,
 
+    "voice_channel_xp_multipliers": {
+        "1056200069952589924": 0.5
+    },
+
     "save_interval_min_seconds": 300,
     "save_interval_max_seconds": 600,
 

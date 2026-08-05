@@ -44,6 +44,13 @@ DEFAULT_CONFIG = {
     "voice_xp_max": 20,
     "voice_require_non_bot_companion": True,
 
+    # Per-channel voice XP multipliers: {"channel_id": multiplier}.
+    # Channels that are not listed use the default multiplier of 1.0.
+    "voice_channel_xp_multipliers": {
+        # Scena Barda: half of the normal voice XP.
+        "1056200069952589924": 0.5,
+    },
+
     "save_interval_min_seconds": 300,
     "save_interval_max_seconds": 600,
 
@@ -213,6 +220,37 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             raise ValueError(
                 "voice_xp_max cannot be lower than voice_xp_min."
             )
+
+        channel_multipliers = config[
+            "voice_channel_xp_multipliers"
+        ]
+
+        if not isinstance(channel_multipliers, dict):
+            raise ValueError(
+                "voice_channel_xp_multipliers must be a mapping "
+                "of channel id to multiplier."
+            )
+
+        for channel_id, multiplier in channel_multipliers.items():
+            try:
+                int(channel_id)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "voice_channel_xp_multipliers keys must be "
+                    "channel ids."
+                )
+
+            if not isinstance(multiplier, (int, float)):
+                raise ValueError(
+                    "voice_channel_xp_multipliers values must be "
+                    "numbers."
+                )
+
+            if multiplier < 0:
+                raise ValueError(
+                    "voice_channel_xp_multipliers values cannot "
+                    "be negative."
+                )
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
@@ -1666,6 +1704,28 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             eligible_member_count - 1
         ) * bonus_per_member
     
+    def _get_voice_channel_multiplier(
+        self,
+        channel_id: int,
+    ) -> float:
+        """
+        Return the voice XP multiplier configured for a channel.
+
+        Channels without their own entry use 1.0.
+        """
+        channel_multipliers = self.config[
+            "voice_channel_xp_multipliers"
+        ]
+
+        multiplier = channel_multipliers.get(
+            str(channel_id)
+        )
+
+        if multiplier is None:
+            return 1.0
+
+        return float(multiplier)
+
     async def _send_voice_group_bonus_notification(
         self,
         channel: discord.abc.GuildChannel,
@@ -1832,6 +1892,12 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                     channel.id
                 ] = eligible_member_count
 
+                channel_multiplier = (
+                    self._get_voice_channel_multiplier(
+                        channel.id
+                    )
+                )
+
                 for member in eligible_members:
                     try:
                         streak = await self._get_or_update_chatstreak(
@@ -1851,6 +1917,12 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                             additional_bonus=group_bonus,
                         )
 
+                        # Per-channel scaling is applied last,
+                        # so it also scales the bonuses.
+                        gained_xp = round(
+                            gained_xp * channel_multiplier
+                        )
+
                         await self._add_pending_xp(
                             discord_id=member.id,
                             username=member.name,
@@ -1864,7 +1936,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                             "User %s gained %s voice XP. "
                             "Base: %s, streak: %s, "
                             "members: %s, group bonus: +%.0f%%, "
-                            "channel: %s.",
+                            "channel: %s, channel multiplier: x%.2f.",
                             member.name,
                             gained_xp,
                             base_xp,
@@ -1872,6 +1944,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                             eligible_member_count,
                             group_bonus * 100,
                             channel.name,
+                            channel_multiplier,
                         )
 
                     except Exception:
