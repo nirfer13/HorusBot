@@ -44,6 +44,9 @@ BOSS_NAMES = {
 
 SYNC_MINUTES = 10
 
+# Masked link to the stream; <> suppresses the embed preview.
+ALTERAGE_LINK = "[Alterage](<https://www.twitch.tv/altermmo_pl>)"
+
 # {boss_id: attempt id} of the last announced Top 1, to tell a new Top 1
 # apart from a late `!polacz` of someone already in it.
 STATE_FILE = "alterage_top1.json"
@@ -399,9 +402,9 @@ class AlterageBossRoles(commands.Cog, name="AlterageBossRoles"):
             if not heroes and not supporters and not (is_new and top.unlinked):
                 continue
             if is_new:
-                lines.append(f"🏆 **Alterage - Ranking {top.boss_name}** - nowy Top 1: {top.result_text()}!")
+                lines.append(f"🏆 **{ALTERAGE_LINK} - Ranking {top.boss_name}** - nowy Top 1: {top.result_text()}!")
             else:
-                lines.append(f"🔗 **Alterage - Ranking {top.boss_name}** - synchronizacja Top 1 ({top.result_text()})")
+                lines.append(f"🔗 **{ALTERAGE_LINK} - Ranking {top.boss_name}** - synchronizacja Top 1 ({top.result_text()})")
             lines.append(f"Bohater: **{discord.utils.escape_markdown(top.hero)}**")
             got = [f"{h} (Bohater)" for h in heroes] + supporters
             if got:
