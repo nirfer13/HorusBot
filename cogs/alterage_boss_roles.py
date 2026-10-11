@@ -106,6 +106,8 @@ class BossTop1:
     hero: str
     supporters: List[str] = field(default_factory=list)
     attempt_id: Optional[str] = None
+    # [(nick, is_hero)] without a Discord account linked via !polacz
+    unlinked: List[tuple] = field(default_factory=list)
 
     @property
     def boss_name(self) -> str:
@@ -280,6 +282,8 @@ class AlterageBossRoles(commands.Cog, name="AlterageBossRoles"):
                 discord_id = login_to_id.get(nick.strip().lower())
                 if discord_id is None:
                     logger.info("Top 1 %s: no linked Discord account for '%s', skipped.", top.boss_id, nick)
+                    if not any(n.lower() == nick.strip().lower() for n, _ in top.unlinked):
+                        top.unlinked.append((nick.strip(), is_hero))
                     continue
                 entry = targets.setdefault(discord_id, TargetEntry(nick=nick))
                 if not any(t is top for t, _ in entry.sources):
@@ -391,16 +395,27 @@ class AlterageBossRoles(commands.Cog, name="AlterageBossRoles"):
                 for src, is_hero in targets[discord_id].sources:
                     if src is top:
                         (heroes if is_hero else supporters).append(f"<@{discord_id}>")
-            if not heroes and not supporters:
+            is_new = top.boss_id in new_tops
+            if not heroes and not supporters and not (is_new and top.unlinked):
                 continue
-            if top.boss_id in new_tops:
+            if is_new:
                 lines.append(f"🏆 **Alterage - Ranking {top.boss_name}** - nowy Top 1: {top.result_text()}!")
             else:
                 lines.append(f"🔗 **Alterage - Ranking {top.boss_name}** - synchronizacja Top 1 ({top.result_text()})")
             lines.append(f"Bohater: **{discord.utils.escape_markdown(top.hero)}**")
             got = [f"{h} (Bohater)" for h in heroes] + supporters
-            verb = "zdobywa" if len(got) == 1 else "zdobywają"
-            lines.append(f"Rangę **{role.name}** {verb}: {', '.join(got)}")
+            if got:
+                verb = "zdobywa" if len(got) == 1 else "zdobywają"
+                lines.append(f"Rangę **{role.name}** {verb}: {', '.join(got)}")
+            if top.unlinked:
+                waiting = ", ".join(
+                    f"**{discord.utils.escape_markdown(nick)}**" + (" (Bohater)" if is_hero else "")
+                    for nick, is_hero in top.unlinked
+                )
+                lines.append(
+                    f"Bez połączonego konta: {waiting}. Aby dostać rangę i dodatkowe szanse "
+                    f"w giveawayu, połącz konto komendą `!polacz <ID Discorda>` na czacie Twitcha."
+                )
             lines.append("")
 
         if removed_names:
