@@ -73,8 +73,8 @@ class FakeChannel:
 
 
 class FakeConn:
-    def __init__(self, rows, error=None):
-        self.rows, self.error = rows, error
+    def __init__(self, rows, error=None, achv=None):
+        self.rows, self.error, self.achv = rows, error, achv
         self.queries = []
 
     def transaction(self, readonly=False):
@@ -91,6 +91,10 @@ class FakeConn:
 
     async def fetch(self, query, *args):
         self.queries.append((query, args))
+        if "skydead_achievements" in query:
+            if self.achv is None:
+                raise asyncpg.exceptions.UndefinedTableError("skydead_achievements")
+            return self.achv
         if self.error:
             raise self.error
         return self.rows
@@ -113,10 +117,10 @@ class FakePool:
 
 
 class FakeBot:
-    def __init__(self, guild, rows, error=None):
+    def __init__(self, guild, rows, error=None, achv=None):
         self.guild = guild
         self.channel = FakeChannel()
-        self.pg_con = FakePool(FakeConn(rows, error))
+        self.pg_con = FakePool(FakeConn(rows, error, achv))
 
     def get_guild(self, gid):
         return self.guild
@@ -135,8 +139,8 @@ def in_tmp(tmp_path, monkeypatch):
     yield
 
 
-def make_cog(guild, rows, error=None):
-    bot = FakeBot(guild, rows, error)
+def make_cog(guild, rows, error=None, achv=None):
+    bot = FakeBot(guild, rows, error, achv)
     cog = sr.SkyDeadRanks(bot)
     cog.ranks = list(sr.DEFAULT_RANKS)
     cog.config_roles = [0] * len(cog.ranks)
@@ -225,3 +229,54 @@ def test_query_reads_links_kills_and_discord_mapping():
     q = sr.COUNTS_QUERY
     assert "FROM skydead_links" in q and "JOIN skydead_kills k ON k.killer_key = l.character_key" in q
     assert "chatters_information" in q and "discord_id" in q
+
+
+# ---------- Wieczny WoWiarz ----------
+
+def arow(login, mask, discord_id=None):
+    return {"login": login, "mask": mask, "discord_id": discord_id}
+
+
+def test_yaml_achievement_rank():
+    if not sr.SKYDEAD_YAML.exists():
+        pytest.skip("twitch-rpg-game-alterage not next to HorusBot")
+    assert sr.load_achievement_rank() == ("Wieczny WoWiarz", 5)
+
+
+def test_load_achievement_rank_block(tmp_path):
+    y = tmp_path / "skydead.yaml"
+    y.write_text('skydead:\n  achievements:\n    rank_name: "Test Rank"   # c\n    required: 3\n'
+                 "    names:\n    - a\n  other: 1\n", encoding="utf-8")
+    assert sr.load_achievement_rank(y) == ("Test Rank", 3)
+    assert sr.load_achievement_rank(tmp_path / "missing") == sr.DEFAULT_ACHV_RANK
+
+
+def test_wowiarz_role_from_five_of_eight():
+    m1, m2 = FakeMember(111), FakeMember(222)
+    guild = FakeGuild(members=[m1, m2])
+    cog, bot = make_cog(guild, [], achv=[arow("five", 0b00011111, "111"), arow("four", 0b00001111, "222"),
+                                         arow("ghost", 0b11111000)])
+    result = run(cog.sync_roles())
+    assert "Wieczny WoWiarz" in guild.created
+    assert [r.name for r in m1.roles if r.name == "Wieczny WoWiarz"] == ["Wieczny WoWiarz"]
+    assert not [r for r in m2.roles if r.name == "Wieczny WoWiarz"]
+    text = "\n".join(bot.channel.sent)
+    assert "<@111> zdobywa rangę **Wieczny WoWiarz** za **5/8**" in text
+    assert "**ghost** ma już **5/8** osiągnięć" in text and "!polacz" in text
+    assert result["wowiarz"] == 1 and result["wowiarz_accounts"] == 2
+    bot.channel.sent.clear()
+    run(cog.sync_roles())  # drugi raz - bez nowych ogłoszeń
+    assert bot.channel.sent == []
+
+
+def test_wowiarz_missing_table_keeps_kill_ranks():
+    m = FakeMember(111)
+    guild = FakeGuild(members=[m])
+    cog, bot = make_cog(guild, [row("hunter", 5, "111")], achv=None)
+    result = run(cog.sync_roles())
+    assert result is not None and result["promoted"] == 1 and result["wowiarz"] == 0
+    assert [r.name for r in m.roles] == ["Łowca Skyborne"]
+
+
+def test_popcount():
+    assert sr.popcount(0) == 0 and sr.popcount(255) == 8 and sr.popcount(0b10100001) == 3

@@ -21,6 +21,9 @@ hint.
   role with the rank's name, created on the first sync when missing (needs
   Manage Roles). Created/found IDs are kept in STATE_FILE, so a role can be
   renamed or recoloured on Discord afterwards.
+- Wieczny WoWiarz: an account whose WoW achievements (skydead_achievements, OR of the masks of its linked
+  characters) reach `achievements.required` of 8 gets that role (name from skydead.yaml, created like the
+  rank roles, SKYDEAD_WOWIARZ_ROLE overrides). It is never taken away; unlinked accounts are announced once.
 - Read-only DB access: queries run inside a READ ONLY transaction on bot.pg_con.
   If the query fails (also: SkyDead tables not created yet), nothing changes.
 """
@@ -85,6 +88,23 @@ HAVING COUNT(k.kill_id) >= $1
 ORDER BY kills DESC;
 """
 
+# Wieczny WoWiarz: OR masek osiągnięć wszystkich postaci powiązanych z kontem Twitch (bot: skydead_achievements).
+WOWIARZ_QUERY = """
+SELECT l.twitch_login AS login, BIT_OR(a.mask) AS mask, ci.discord_id
+FROM skydead_achievements a
+JOIN skydead_links l ON l.character_key = a.character_key
+LEFT JOIN LATERAL (
+    SELECT discord_id
+    FROM chatters_information
+    WHERE lower(trim(chtr_name)) = lower(trim(l.twitch_login))
+      AND discord_id IS NOT NULL AND discord_id::text <> ''
+    LIMIT 1
+) ci ON TRUE
+GROUP BY l.twitch_login, ci.discord_id;
+"""
+WOWIARZ_COLOUR = 0xF5C518
+DEFAULT_ACHV_RANK = ("Wieczny WoWiarz", 5)
+
 _RANK_LINE = re.compile(r"^\s*-\s*\{\s*kills:\s*(\d+)\s*,\s*name:\s*([^}]+?)\s*\}\s*$")
 
 
@@ -112,6 +132,39 @@ def load_ranks(path: Path = SKYDEAD_YAML) -> List[Tuple[int, str]]:
         logger.warning("SkyDead ranks: no `ranks:` list in %s, using defaults.", path)
         return list(DEFAULT_RANKS)
     return sorted(ranks)
+
+
+def popcount(mask: int) -> int:
+    return bin(int(mask or 0) & 0xFF).count("1")
+
+
+def load_achievement_rank(path: Path = SKYDEAD_YAML) -> Tuple[str, int]:
+    """(nazwa rangi, ile osiągnięć potrzeba) z bloku `achievements:` w skydead.yaml."""
+    name, required = DEFAULT_ACHV_RANK
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return name, required
+    inside, indent = False, 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        lead = len(line) - len(line.lstrip())
+        if stripped == "achievements:":
+            inside, indent = True, lead
+            continue
+        if not inside:
+            continue
+        if lead <= indent:
+            break  # koniec bloku
+        key, _, value = stripped.partition(":")
+        value = value.split("#", 1)[0].strip().strip('"').strip("'")
+        if key == "rank_name" and value:
+            name = value
+        elif key == "required" and value.isdigit():
+            required = int(value)
+    return name, required
 
 
 def tier_for(kills: int, ranks: List[Tuple[int, str]]) -> int:
@@ -148,6 +201,8 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
             RolesConfigTwitch._parse_int(raw.get(f"SKYDEAD_RANK_{i}", "0"), 0)
             for i in range(1, len(self.ranks) + 1)
         ]
+        self.achv_rank_name, self.achv_required = load_achievement_rank()
+        self.config_wowiarz = RolesConfigTwitch._parse_int(raw.get("SKYDEAD_WOWIARZ_ROLE", "0"), 0)
         state = self._load_state()
         self._role_ids: Dict[str, int] = state.get("roles", {})
         self._announced: Dict[str, int] = state.get("announced", {})
@@ -279,6 +334,22 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
             logger.error("Guild %s not found.", self.config.guild_id)
             return None
 
+        lines: List[str] = []
+        ranks = await self._sync_kill_ranks(guild, dry_run, lines)
+        wowiarz = await self._sync_wowiarz(guild, dry_run, lines)
+        if ranks is None and wowiarz is None:
+            return None
+        ranks = ranks or {"promoted": 0, "created": [], "hunters": 0}
+        wowiarz = wowiarz or {"granted": 0, "created": [], "accounts": 0}
+
+        messages = self._chunk(lines)
+        if not dry_run and messages:
+            await self._announce(messages)
+        return {"promoted": ranks["promoted"], "created": ranks["created"] + wowiarz["created"],
+                "messages": messages, "hunters": ranks["hunters"],
+                "wowiarz": wowiarz["granted"], "wowiarz_accounts": wowiarz["accounts"]}
+
+    async def _sync_kill_ranks(self, guild, dry_run: bool, lines: List[str]) -> Optional[dict]:
         hunters = await self._fetch_hunters()
         if hunters is None:
             return None
@@ -296,7 +367,6 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
                 if prev is None or h.kills > prev.kills:
                     linked[h.discord_id] = h
 
-        lines: List[str] = []
         promoted = 0
 
         for discord_id, h in linked.items():
@@ -344,11 +414,99 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
 
         if state_changed:
             self._save_state()
+        return {"promoted": promoted, "created": created, "hunters": len(hunters)}
 
-        messages = self._chunk(lines)
-        if not dry_run and messages:
-            await self._announce(messages)
-        return {"promoted": promoted, "created": created, "messages": messages, "hunters": len(hunters)}
+    # ---------- Wieczny WoWiarz (osiągnięcia konta) ----------
+
+    async def _fetch_wowiarze(self) -> Optional[List[Tuple[str, int, Optional[int]]]]:
+        """[(login, maska konta, discord_id)] - OR masek wszystkich postaci powiązanych z kontem Twitch."""
+        try:
+            async with self.bot.pg_con.acquire() as conn:
+                async with conn.transaction(readonly=True):
+                    rows = await conn.fetch(WOWIARZ_QUERY)
+        except asyncpg.exceptions.UndefinedTableError:
+            return None  # bot jeszcze nie utworzył skydead_achievements - nic do zrobienia
+        except Exception as e:
+            logger.error("SkyDead achievements query failed, role left unchanged: %s: %s", type(e).__name__, e)
+            return None
+        return [(str(r["login"]).strip().lower(), int(r["mask"] or 0), _parse_discord_id(r["discord_id"]))
+                for r in rows]
+
+    async def _resolve_wowiarz_role(self, guild, dry_run: bool) -> Tuple[Optional[discord.Role], List[str]]:
+        name = self.achv_rank_name
+        role = None
+        for rid in (self.config_wowiarz, self._role_ids.get("wowiarz", 0)):
+            if rid:
+                role = guild.get_role(rid)
+                if role is not None:
+                    break
+        if role is None:
+            role = discord.utils.find(lambda r: r.name.casefold() == name.casefold(), guild.roles)
+        created: List[str] = []
+        if role is None:
+            created.append(name)
+            if dry_run:
+                return None, created
+            try:
+                role = await guild.create_role(name=name, colour=discord.Colour(WOWIARZ_COLOUR), mentionable=False,
+                                               hoist=False, reason="SkyDead: 5 z 8 osiągnięć w WoW")
+                logger.info("SkyDead role created: %s (%s)", role.name, role.id)
+            except discord.HTTPException as e:
+                logger.error("Could not create role %s: %s", name, e)
+                return None, created
+        if self._role_ids.get("wowiarz") != role.id and not dry_run:
+            self._role_ids["wowiarz"] = role.id
+            self._save_state()
+        return role, created
+
+    async def _sync_wowiarz(self, guild, dry_run: bool, lines: List[str]) -> Optional[dict]:
+        accounts = await self._fetch_wowiarze()
+        if accounts is None:
+            return None
+        earned = [(login, mask, did) for login, mask, did in accounts if popcount(mask) >= self.achv_required]
+        if not earned:
+            return {"granted": 0, "created": [], "accounts": 0}
+        role, created = await self._resolve_wowiarz_role(guild, dry_run)
+        if role is None and not dry_run:
+            return None
+        granted = 0
+        state_changed = False
+        for login, mask, discord_id in earned:
+            if discord_id is None:
+                key = "wowiarz:" + login
+                if not self._announced.get(key):
+                    lines.append(self._wowiarz_unlinked_line(login, mask))
+                    if not dry_run:
+                        self._announced[key] = 1
+                        state_changed = True
+                continue
+            member = guild.get_member(discord_id)
+            if member is None:
+                continue
+            if role is not None and role in member.roles:
+                continue  # ranga raz na zawsze - nigdy jej nie zdejmujemy
+            granted += 1
+            lines.append(self._wowiarz_line(member.id, mask))
+            if dry_run:
+                continue
+            try:
+                await member.add_roles(role, reason=f"SkyDead: {popcount(mask)}/8 osiągnięć w WoW")
+                logger.info("Role %s added: %s (%s)", role.name, member, login)
+            except discord.HTTPException as e:
+                logger.error("Could not add role %s to %s: %s", role.name, member, e)
+        if state_changed:
+            self._save_state()
+        return {"granted": granted, "created": created, "accounts": len(earned)}
+
+    def _wowiarz_line(self, discord_id: int, mask: int) -> str:
+        return (f"🍺 <@{discord_id}> zdobywa rangę **{self.achv_rank_name}** za **{popcount(mask)}/8** osiągnięć "
+                f"w WoW (SkyDead na {TWITCH_LINK})!")
+
+    def _wowiarz_unlinked_line(self, login: str, mask: int) -> str:
+        name = discord.utils.escape_markdown(login)
+        return (f"🍺 **{name}** ma już **{popcount(mask)}/8** osiągnięć w WoW (SkyDead na {TWITCH_LINK})! Aby dostać "
+                f"rangę **{self.achv_rank_name}** na Discordzie, połącz konto komendą `!polacz <ID Discorda>` "
+                f"na czacie Twitcha.")
 
     # ---------- Announcements ----------
 
@@ -417,7 +575,8 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
         if created:
             extra = (" | do utworzenia: " if dry_run else " | utworzone role: ") + ", ".join(created)
         await ctx.send(f"{'[PODGLĄD] ' if dry_run else ''}SkyDead: {result['hunters']} kont z rangą, "
-                       f"+{result['promoted']} rang{extra}.")
+                       f"+{result['promoted']} rang; {self.achv_rank_name}: {result['wowiarz_accounts']} kont, "
+                       f"+{result['wowiarz']}{extra}.")
         if dry_run:
             for msg in result["messages"]:
                 await ctx.send(msg, allowed_mentions=discord.AllowedMentions.none())
