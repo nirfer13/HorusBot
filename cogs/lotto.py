@@ -5,6 +5,7 @@ Function for giveaways. Win ratio calculated based on roles users have.
 
 import asyncio
 import json
+from pathlib import Path
 import random
 import discord
 from datetime import datetime, timedelta
@@ -42,7 +43,7 @@ class Lotto(commands.Cog, name="lotto"):
 
         print("Lotto starting...")
 
-        with open("C:/Programowanie/HorusBot/ranksConfig.json", encoding="utf-8") as jsonFile:
+        with open(Path(__file__).resolve().parents[1] / "ranksConfig.json", encoding="utf-8") as jsonFile:
             jsonObject = json.load(jsonFile)
 
         users: List[discord.Member] = []
