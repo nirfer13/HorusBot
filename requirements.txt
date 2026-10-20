@@ -17,3 +17,4 @@ asyncpg
 Pillow
 requires.io
 pycord
+tzdata
