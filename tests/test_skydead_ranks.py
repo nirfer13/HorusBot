@@ -280,3 +280,30 @@ def test_wowiarz_missing_table_keeps_kill_ranks():
 
 def test_popcount():
     assert sr.popcount(0) == 0 and sr.popcount(255) == 8 and sr.popcount(0b10100001) == 3
+
+
+# ---------- Wieczny Hardcore ----------
+
+def test_yaml_nested_hardcore_block(tmp_path):
+    y = tmp_path / "skydead.yaml"
+    y.write_text("skydead:\n  achievements:\n    rank_name: \"Wieczny WoWiarz\"\n    required: 5\n"
+                 "    hardcore:\n      rank_name: \"Twardziel\"\n      bit: 8\n    names:\n    - a\n  other: 1\n",
+                 encoding="utf-8")
+    assert sr.load_achievement_rank(y) == ("Wieczny WoWiarz", 5)  # rank_name z hardcore nie nadpisuje
+    assert sr.load_hardcore_name(y) == "Twardziel"
+    assert sr.load_hardcore_name(tmp_path / "missing") == sr.DEFAULT_HARDCORE_NAME
+
+
+def test_hardcore_role_from_bit_8_and_not_counted_for_wowiarz():
+    m1, m2 = FakeMember(111), FakeMember(222)
+    guild = FakeGuild(members=[m1, m2])
+    # 111: Hardcore + 4 osiągnięcia (bit 8 nie dopełnia do 5 z 8); 222: 5 z 8 bez Hardcore
+    cog, bot = make_cog(guild, [], achv=[arow("hc", 256 + 0b1111, "111"), arow("five", 0b11111, "222")])
+    result = run(cog.sync_roles())
+    names1 = sorted(r.name for r in m1.roles)
+    names2 = sorted(r.name for r in m2.roles)
+    assert names1 == ["Wieczny Hardcore"]
+    assert names2 == ["Wieczny WoWiarz"]
+    text = "\n".join(bot.channel.sent)
+    assert "<@111> zdobywa rangę **Wieczny Hardcore**" in text
+    assert result["hardcore"] == 1 and result["wowiarz"] == 1

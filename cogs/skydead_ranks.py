@@ -24,6 +24,9 @@ hint.
 - Wieczny WoWiarz: an account whose WoW achievements (skydead_achievements, OR of the masks of its linked
   characters) reach `achievements.required` of 8 gets that role (name from skydead.yaml, created like the
   rank roles, SKYDEAD_WOWIARZ_ROLE overrides). It is never taken away; unlinked accounts are announced once.
+- Wieczny Hardcore: an account with bit 8 (value 256) in that OR-ed mask - a character reached level 60 without
+  dying, tracked by the add-on from level 1 - gets that role (name from achievements.hardcore.rank_name,
+  SKYDEAD_HARDCORE_ROLE overrides); same rules as Wieczny WoWiarz, which counts only bits 0-7.
 - Read-only DB access: queries run inside a READ ONLY transaction on bot.pg_con.
   If the query fails (also: SkyDead tables not created yet), nothing changes.
 """
@@ -104,6 +107,10 @@ GROUP BY l.twitch_login, ci.discord_id;
 """
 WOWIARZ_COLOUR = 0xF5C518
 DEFAULT_ACHV_RANK = ("Wieczny WoWiarz", 5)
+# Wieczny Hardcore: bit 8 maski (60 poziom bez śmierci, postać z add-onem od 1 poziomu) - osobna ranga.
+HARDCORE_BIT = 256
+HARDCORE_COLOUR = 0xC0392B
+DEFAULT_HARDCORE_NAME = "Wieczny Hardcore"
 
 _RANK_LINE = re.compile(r"^\s*-\s*\{\s*kills:\s*(\d+)\s*,\s*name:\s*([^}]+?)\s*\}\s*$")
 
@@ -138,33 +145,61 @@ def popcount(mask: int) -> int:
     return bin(int(mask or 0) & 0xFF).count("1")
 
 
-def load_achievement_rank(path: Path = SKYDEAD_YAML) -> Tuple[str, int]:
-    """(nazwa rangi, ile osiągnięć potrzeba) z bloku `achievements:` w skydead.yaml."""
-    name, required = DEFAULT_ACHV_RANK
+def _achievements_block(path: Path) -> Dict[str, object]:
+    """Bezpośrednie klucze bloku `achievements:` w skydead.yaml (wartości proste i zagnieżdżone słowniki 1 poziomu)."""
+    out: Dict[str, object] = {}
     try:
         text = path.read_text(encoding="utf-8")
     except Exception:
-        return name, required
-    inside, indent = False, 0
+        return out
+    inside, indent, child, nested_key, nested_indent = False, 0, None, None, None
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
         lead = len(line) - len(line.lstrip())
-        if stripped == "achievements:":
-            inside, indent = True, lead
-            continue
         if not inside:
+            if stripped == "achievements:":
+                inside, indent = True, lead
             continue
         if lead <= indent:
             break  # koniec bloku
+        if child is None:
+            child = lead
         key, _, value = stripped.partition(":")
         value = value.split("#", 1)[0].strip().strip('"').strip("'")
-        if key == "rank_name" and value:
-            name = value
-        elif key == "required" and value.isdigit():
-            required = int(value)
+        if lead == child:
+            nested_key = None
+            if value == "" and not key.startswith("-"):
+                nested_key, nested_indent = key, None
+                out[key] = {}
+            else:
+                out[key] = value
+        elif nested_key and isinstance(out.get(nested_key), dict):
+            if nested_indent is None:
+                nested_indent = lead
+            if lead == nested_indent and not key.startswith("-"):
+                out[nested_key][key] = value
+    return out
+
+
+def load_achievement_rank(path: Path = SKYDEAD_YAML) -> Tuple[str, int]:
+    """(nazwa rangi, ile osiągnięć potrzeba) z bloku `achievements:` w skydead.yaml."""
+    name, required = DEFAULT_ACHV_RANK
+    block = _achievements_block(path)
+    if isinstance(block.get("rank_name"), str) and block["rank_name"]:
+        name = block["rank_name"]
+    if isinstance(block.get("required"), str) and block["required"].isdigit():
+        required = int(block["required"])
     return name, required
+
+
+def load_hardcore_name(path: Path = SKYDEAD_YAML) -> str:
+    """Nazwa rangi Wieczny Hardcore z `achievements.hardcore.rank_name` (domyślnie DEFAULT_HARDCORE_NAME)."""
+    hc = _achievements_block(path).get("hardcore")
+    if isinstance(hc, dict) and isinstance(hc.get("rank_name"), str) and hc["rank_name"]:
+        return hc["rank_name"]
+    return DEFAULT_HARDCORE_NAME
 
 
 def tier_for(kills: int, ranks: List[Tuple[int, str]]) -> int:
@@ -202,6 +237,8 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
             for i in range(1, len(self.ranks) + 1)
         ]
         self.achv_rank_name, self.achv_required = load_achievement_rank()
+        self.hardcore_name = load_hardcore_name()
+        self.config_hardcore = RolesConfigTwitch._parse_int(self.config._raw.get("SKYDEAD_HARDCORE_ROLE", "0"), 0)
         self.config_wowiarz = RolesConfigTwitch._parse_int(raw.get("SKYDEAD_WOWIARZ_ROLE", "0"), 0)
         state = self._load_state()
         self._role_ids: Dict[str, int] = state.get("roles", {})
@@ -340,14 +377,16 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
         if ranks is None and wowiarz is None:
             return None
         ranks = ranks or {"promoted": 0, "created": [], "hunters": 0}
-        wowiarz = wowiarz or {"granted": 0, "created": [], "accounts": 0}
+        wowiarz = wowiarz or {"granted": 0, "created": [], "accounts": 0, "hardcore_granted": 0,
+                              "hardcore_accounts": 0}
 
         messages = self._chunk(lines)
         if not dry_run and messages:
             await self._announce(messages)
         return {"promoted": ranks["promoted"], "created": ranks["created"] + wowiarz["created"],
                 "messages": messages, "hunters": ranks["hunters"],
-                "wowiarz": wowiarz["granted"], "wowiarz_accounts": wowiarz["accounts"]}
+                "wowiarz": wowiarz["granted"], "wowiarz_accounts": wowiarz["accounts"],
+                "hardcore": wowiarz["hardcore_granted"], "hardcore_accounts": wowiarz["hardcore_accounts"]}
 
     async def _sync_kill_ranks(self, guild, dry_run: bool, lines: List[str]) -> Optional[dict]:
         hunters = await self._fetch_hunters()
@@ -432,10 +471,21 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
         return [(str(r["login"]).strip().lower(), int(r["mask"] or 0), _parse_discord_id(r["discord_id"]))
                 for r in rows]
 
-    async def _resolve_wowiarz_role(self, guild, dry_run: bool) -> Tuple[Optional[discord.Role], List[str]]:
-        name = self.achv_rank_name
+    # Rangi honorowe z osiągnięć konta: Wieczny WoWiarz (5 z 8) i Wieczny Hardcore (bit 8). Raz na zawsze.
+    def _honor_specs(self) -> List[dict]:
+        return [
+            {"key": "wowiarz", "name": self.achv_rank_name, "colour": WOWIARZ_COLOUR, "config": self.config_wowiarz,
+             "earned": lambda m: popcount(m) >= self.achv_required, "reason": "SkyDead: 5 z 8 osiągnięć w WoW",
+             "line": self._wowiarz_line, "unlinked": self._wowiarz_unlinked_line},
+            {"key": "hardcore", "name": self.hardcore_name, "colour": HARDCORE_COLOUR, "config": self.config_hardcore,
+             "earned": lambda m: bool(int(m or 0) & HARDCORE_BIT), "reason": "SkyDead: 60 poziom bez śmierci w WoW",
+             "line": self._hardcore_line, "unlinked": self._hardcore_unlinked_line},
+        ]
+
+    async def _resolve_honor_role(self, guild, dry_run: bool, spec: dict) -> Tuple[Optional[discord.Role], List[str]]:
+        name, key = spec["name"], spec["key"]
         role = None
-        for rid in (self.config_wowiarz, self._role_ids.get("wowiarz", 0)):
+        for rid in (spec["config"], self._role_ids.get(key, 0)):
             if rid:
                 role = guild.get_role(rid)
                 if role is not None:
@@ -448,34 +498,31 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
             if dry_run:
                 return None, created
             try:
-                role = await guild.create_role(name=name, colour=discord.Colour(WOWIARZ_COLOUR), mentionable=False,
-                                               hoist=False, reason="SkyDead: 5 z 8 osiągnięć w WoW")
+                role = await guild.create_role(name=name, colour=discord.Colour(spec["colour"]), mentionable=False,
+                                               hoist=False, reason=spec["reason"])
                 logger.info("SkyDead role created: %s (%s)", role.name, role.id)
             except discord.HTTPException as e:
                 logger.error("Could not create role %s: %s", name, e)
                 return None, created
-        if self._role_ids.get("wowiarz") != role.id and not dry_run:
-            self._role_ids["wowiarz"] = role.id
+        if self._role_ids.get(key) != role.id and not dry_run:
+            self._role_ids[key] = role.id
             self._save_state()
         return role, created
 
-    async def _sync_wowiarz(self, guild, dry_run: bool, lines: List[str]) -> Optional[dict]:
-        accounts = await self._fetch_wowiarze()
-        if accounts is None:
-            return None
-        earned = [(login, mask, did) for login, mask, did in accounts if popcount(mask) >= self.achv_required]
+    async def _sync_honor(self, guild, dry_run: bool, lines: List[str], spec: dict, accounts) -> Optional[dict]:
+        earned = [(login, mask, did) for login, mask, did in accounts if spec["earned"](mask)]
         if not earned:
             return {"granted": 0, "created": [], "accounts": 0}
-        role, created = await self._resolve_wowiarz_role(guild, dry_run)
+        role, created = await self._resolve_honor_role(guild, dry_run, spec)
         if role is None and not dry_run:
             return None
         granted = 0
         state_changed = False
         for login, mask, discord_id in earned:
             if discord_id is None:
-                key = "wowiarz:" + login
+                key = spec["key"] + ":" + login
                 if not self._announced.get(key):
-                    lines.append(self._wowiarz_unlinked_line(login, mask))
+                    lines.append(spec["unlinked"](login, mask))
                     if not dry_run:
                         self._announced[key] = 1
                         state_changed = True
@@ -486,17 +533,36 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
             if role is not None and role in member.roles:
                 continue  # ranga raz na zawsze - nigdy jej nie zdejmujemy
             granted += 1
-            lines.append(self._wowiarz_line(member.id, mask))
+            lines.append(spec["line"](member.id, mask))
             if dry_run:
                 continue
             try:
-                await member.add_roles(role, reason=f"SkyDead: {popcount(mask)}/8 osiągnięć w WoW")
+                await member.add_roles(role, reason=spec["reason"])
                 logger.info("Role %s added: %s (%s)", role.name, member, login)
             except discord.HTTPException as e:
                 logger.error("Could not add role %s to %s: %s", role.name, member, e)
         if state_changed:
             self._save_state()
         return {"granted": granted, "created": created, "accounts": len(earned)}
+
+    async def _sync_wowiarz(self, guild, dry_run: bool, lines: List[str]) -> Optional[dict]:
+        """Obie rangi z osiągnięć. Klucze wyniku: granted/accounts (WoWiarz), hardcore_granted/_accounts."""
+        accounts = await self._fetch_wowiarze()
+        if accounts is None:
+            return None
+        out = {"granted": 0, "created": [], "accounts": 0, "hardcore_granted": 0, "hardcore_accounts": 0}
+        any_ok = False
+        for spec in self._honor_specs():
+            r = await self._sync_honor(guild, dry_run, lines, spec, accounts)
+            if r is None:
+                continue
+            any_ok = True
+            out["created"] += r["created"]
+            if spec["key"] == "wowiarz":
+                out["granted"], out["accounts"] = r["granted"], r["accounts"]
+            else:
+                out["hardcore_granted"], out["hardcore_accounts"] = r["granted"], r["accounts"]
+        return out if any_ok else None
 
     def _wowiarz_line(self, discord_id: int, mask: int) -> str:
         return (f"🍺 <@{discord_id}> zdobywa rangę **{self.achv_rank_name}** za **{popcount(mask)}/8** osiągnięć "
@@ -506,6 +572,16 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
         name = discord.utils.escape_markdown(login)
         return (f"🍺 **{name}** ma już **{popcount(mask)}/8** osiągnięć w WoW (SkyDead na {TWITCH_LINK})! Aby dostać "
                 f"rangę **{self.achv_rank_name}** na Discordzie, połącz konto komendą `!polacz <ID Discorda>` "
+                f"na czacie Twitcha.")
+
+    def _hardcore_line(self, discord_id: int, mask: int) -> str:
+        return (f"💀 <@{discord_id}> zdobywa rangę **{self.hardcore_name}** - 60 poziom w WoW bez ani jednej śmierci "
+                f"(SkyDead na {TWITCH_LINK})!")
+
+    def _hardcore_unlinked_line(self, login: str, mask: int) -> str:
+        name = discord.utils.escape_markdown(login)
+        return (f"💀 **{name}** doszedł do 60 poziomu w WoW bez śmierci (SkyDead na {TWITCH_LINK})! Aby dostać "
+                f"rangę **{self.hardcore_name}** na Discordzie, połącz konto komendą `!polacz <ID Discorda>` "
                 f"na czacie Twitcha.")
 
     # ---------- Announcements ----------
@@ -576,7 +652,8 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
             extra = (" | do utworzenia: " if dry_run else " | utworzone role: ") + ", ".join(created)
         await ctx.send(f"{'[PODGLĄD] ' if dry_run else ''}SkyDead: {result['hunters']} kont z rangą, "
                        f"+{result['promoted']} rang; {self.achv_rank_name}: {result['wowiarz_accounts']} kont, "
-                       f"+{result['wowiarz']}{extra}.")
+                       f"+{result['wowiarz']}; {self.hardcore_name}: {result['hardcore_accounts']} kont, "
+                       f"+{result['hardcore']}{extra}.")
         if dry_run:
             for msg in result["messages"]:
                 await ctx.send(msg, allowed_mentions=discord.AllowedMentions.none())
