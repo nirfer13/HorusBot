@@ -6,10 +6,12 @@ authors = ["nirfer13 <86719868+nirfer13@users.noreply.github.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "3.9.13"
-discord.py = "1.7.3"
-yarl="1.7.2"
-python-dotenv = "0.18.0"
+python = "^3.11"
+discord.py = "2.7.1"
+aiohttp = "3.14.5"
+asyncpg = "0.32.0"
+python-dotenv = "1.2.4"
+tzdata = "2026.5"
 
 
 [build-system]

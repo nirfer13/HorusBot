@@ -1,20 +1,11 @@
-aiohttp==3.14.5
-async-timeout==3.0.1
-asyncio==3.4.3
-attrs==21.4.0
-chardet==3.0.0
+# Only what the code imports, pinned to the versions the bot's .venv runs.
 discord.py==2.7.1
-idna==3.3
-multidict==7.1.0
-pycodestyle==2.7.0
-python-dotenv==0.18.0
-toml==0.10.2
-typing_extensions==4.1.1
-yarl==1.25.1
-psycopg==3.0.14
-psycopg2-binary==2.9.3
-asyncpg
-Pillow
-requires.io
-pycord
-tzdata
+# discord.py's HTTP layer; pinned so it cannot fall below the CVE-2026-111066 fix.
+aiohttp==3.14.5
+asyncpg==0.32.0
+python-dotenv==1.2.4
+# Windows has no system timezone database, so zoneinfo needs this.
+tzdata==2026.5
+
+# Tests
+pytest>=8.0
