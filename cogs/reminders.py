@@ -34,26 +34,52 @@ VOTES = {
 class reminders(commands.Cog, name="reminders"):
     def __init__(self, bot):
         self.bot = bot
+        self.task1 = None
+        self.task2 = None
+        self.task3 = None
+
+    def cog_unload(self):
+        for task in (self.task1, self.task2, self.task3):
+            if task is not None and not task.done():
+                task.cancel()
+
+    def _loops_alive(self):
+        return all(task is not None and not task.done()
+                   for task in (self.task1, self.task2, self.task3))
 
     @commands.Cog.listener()
     async def on_ready(self):
+        """Start the three weekly reminder loops - once.
+
+        discord.py dispatches `on_ready` again on every re-IDENTIFY, and a dropped
+        internet connection causes exactly that as soon as the gateway session is
+        too old to RESUME. This used to create three MORE `while True` loops every
+        time and overwrite self.task1/2/3, so each loop it replaced became
+        unreachable and ran on forever: after three reconnects the Saturday reminder
+        went out four times, and nothing short of restarting the bot could stop it.
+
+        The guard also revives a loop that died on its own (an exception inside it
+        kills only that task), which a plain "started once" flag would not.
+        """
         print("Bot ready...")
+        if self._loops_alive():
+            return
 
-        #function to get context
+        # The context is made by posting a message and deleting it, so it is made
+        # only when a loop actually has to be started - not on every reconnect.
         channel = self.bot.get_channel(LogChannelID)
-
 
         msg = await channel.send("🔧 Przygotowuję kontekst...")
         ctx = await self.bot.get_context(msg)
         await msg.delete()
 
-        # msg = await channel.fetch_message(1396072517361340489)
-        # ctx = await self.bot.get_context(msg)
-
-        self.task1 = self.bot.loop.create_task(self.vote_reminder(ctx))
-        self.task2 = self.bot.loop.create_task(self.command_reminder(ctx))
-        self.task3 = self.bot.loop.create_task(self.news_reminder(ctx))
-        print("Reminder tasks started.")   
+        if self.task1 is None or self.task1.done():
+            self.task1 = self.bot.loop.create_task(self.vote_reminder(ctx))
+        if self.task2 is None or self.task2.done():
+            self.task2 = self.bot.loop.create_task(self.command_reminder(ctx))
+        if self.task3 is None or self.task3.done():
+            self.task3 = self.bot.loop.create_task(self.news_reminder(ctx))
+        print("Reminder tasks started.")
 
     async def vote_reminder(self, ctx):
         print("Vote reminder task started.")

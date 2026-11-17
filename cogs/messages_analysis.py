@@ -33,16 +33,34 @@ VOTES = {
 class messages_analysis(commands.Cog, name="messages_analysis"):
     def __init__(self, bot):
         self.bot = bot
+        self.task = None
+
+    def cog_unload(self):
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
 
     @commands.Cog.listener()
     async def on_ready(self):
+        """Start the weekly-ranking loop - once.
+
+        `on_ready` comes again on every re-IDENTIFY, which is what a dropped
+        internet connection causes once the gateway session is too old to RESUME.
+        Each one used to create another `msg1` loop and overwrite self.task, leaving
+        the previous loop running unreachable - and this loop is not a harmless one:
+        at 20:00 it posts the weekly ranking, then CLEARS it and juggles the Spamer
+        role. Two of them race (the second reads the ranking the first has already
+        cleared, so it posts an empty one and hands the role to whoever is left),
+        and each extra reconnect added another racer. The "Horus gotowy do
+        szpiegowania." line went out on every reconnect too, which is the visible
+        half of the same bug.
+        """
         print("Bot ready...")
+        if self.task is not None and not self.task.done():
+            return
 
-        #function to get context
+        # The context is made by posting a message and deleting it, so it is made
+        # only when the loop actually has to be started.
         channel = self.bot.get_channel(LogChannelID)
-
-        # msg = await channel.fetch_message(1396072517361340489)
-        # ctx = await self.bot.get_context(msg)
 
         msg = await channel.send("🔧 Przygotowuję kontekst...")
         ctx = await self.bot.get_context(msg)
@@ -51,7 +69,7 @@ class messages_analysis(commands.Cog, name="messages_analysis"):
 
         self.task = self.bot.loop.create_task(self.msg1(ctx))
         print("Task started.")
-        
+
 
     async def msg1(self, ctx):
         print("Loop check 1.")
