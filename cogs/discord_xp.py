@@ -21,6 +21,12 @@ RANKING_IMAGE_FILE = Path("images/ranking.png")
 
 LEVEL_UP_CHANNEL_ID = 776379796367212594
 
+# Largest value of a PostgreSQL BIGINT (Discord ids, XP amounts).
+MAX_BIGINT = 2 ** 63 - 1
+
+# No XP total comes near this; a bigger deduction means the same: zero.
+MAX_DEDUCTION = 2 ** 62
+
 LEVEL_UP_IMAGE_DIRECTORY = Path(
     r"C:\Programowanie\HorusBot\images\level_up"
 )
@@ -702,6 +708,14 @@ class DiscordXP(commands.Cog, name="discord_xp"):
 
             if processing_files:
                 for processing_file in processing_files:
+                    if processing_file in self._imported_external_files():
+                        # Already saved to the database; only the file
+                        # could not be removed then. Never import twice.
+                        await self._remove_imported_external_file(
+                            processing_file
+                        )
+                        continue
+
                     await self._process_external_xp_file(
                         processing_file
                     )
@@ -976,12 +990,69 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         except FileExistsError:
             pass
 
+    def _imported_external_files(self) -> set:
+        """
+        Processing files whose XP is already in the database but which
+        could not be deleted yet (kept in memory until they are gone).
+        """
+        imported = getattr(
+            self,
+            "_imported_external_xp_files",
+            None,
+        )
+
+        if imported is None:
+            imported = set()
+            self._imported_external_xp_files = imported
+
+        return imported
+
+    async def _remove_imported_external_file(
+        self,
+        processing_file: Path,
+    ) -> bool:
+        """
+        Delete a processing file after its XP was saved.
+
+        On Windows the delete fails while another program has the file
+        open (a backup of the folder, an antivirus scan). Such a reader is
+        done within moments, so the delete is retried. A file that still
+        cannot be deleted is remembered, so that it is not imported again.
+        """
+        for attempt in range(5):
+            try:
+                processing_file.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                if attempt < 4:
+                    await asyncio.sleep(0.2)
+                    continue
+
+                logger.exception(
+                    "External XP from %s was saved, but the file could "
+                    "not be removed. It will not be imported again.",
+                    processing_file,
+                )
+                self._imported_external_files().add(processing_file)
+                return False
+
+            self._imported_external_files().discard(processing_file)
+            return True
+
+        return False
+
     async def _process_external_xp_file(
         self,
         processing_file: Path,
     ) -> None:
         """
         Validate and save XP from one claimed processing file.
+
+        A positive amount is added to the user. A negative amount is a
+        deduction (the RPG bot writes one for the victim of an XP theft):
+        it is taken from the user's XP, never below zero, and never
+        creates a row for a user who has none.
 
         The file is deleted only after a successful database transaction.
         On failure it remains on disk and will be retried later.
@@ -1028,19 +1099,35 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 )
                 continue
 
-            if discord_id <= 0:
+            if discord_id <= 0 or discord_id > MAX_BIGINT:
                 logger.warning(
                     "Ignoring invalid Discord ID: %s.",
                     discord_id,
                 )
                 continue
 
-            if gained_xp <= 0:
+            if gained_xp == 0:
                 continue
 
+            # Signed: a negative amount is a deduction.
             xp_by_user[discord_id] += gained_xp
 
-        if not xp_by_user:
+        gains_by_user = {
+            discord_id: xp_change
+            for discord_id, xp_change in xp_by_user.items()
+            if xp_change > 0
+        }
+
+        # Clamped: a deduction bigger than any XP total gives the same
+        # result (zero) and always fits the database type. Without it one
+        # absurd number would block the whole file for ever.
+        deductions_by_user = {
+            discord_id: max(xp_change, -MAX_DEDUCTION)
+            for discord_id, xp_change in xp_by_user.items()
+            if xp_change < 0
+        }
+
+        if not gains_by_user and not deductions_by_user:
             try:
                 processing_file.unlink()
             except OSError:
@@ -1056,7 +1143,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
 
         records = []
 
-        for discord_id, gained_xp in xp_by_user.items():
+        for discord_id, gained_xp in gains_by_user.items():
             member = (
                 guild.get_member(discord_id)
                 if guild is not None
@@ -1077,40 +1164,83 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 )
             )
 
+        if deductions_by_user:
+            # XP earned in chat is kept in memory for a few minutes before
+            # it is saved. Save it first: otherwise a deduction would be
+            # floored against too low a total and the unsaved XP would
+            # come back on top of it.
+            try:
+                await self.flush_pending_xp()
+            except Exception:
+                logger.exception(
+                    "Could not save pending XP before a deduction. "
+                    "The deduction is applied to the saved XP."
+                )
+
+        # Users whose XP really changed in the database.
+        changed_user_ids = set(gains_by_user.keys())
+        deducted_user_ids = set()
+
         try:
             async with self.bot.pg_con.acquire() as connection:
+                # Gains and deductions of one file are saved together
+                # or not at all.
                 async with connection.transaction():
-                    await connection.executemany(
-                        """
-                        INSERT INTO chatters_information_discord (
-                            chtr_id,
-                            chtr_name,
-                            xp,
-                            chatstreak
-                        )
-                        VALUES ($1, $2, $3, 0)
-                        ON CONFLICT (chtr_id)
-                        DO UPDATE SET
-                            chtr_name = CASE
-                                WHEN EXCLUDED.chtr_name
-                                    = EXCLUDED.chtr_id::TEXT
-                                    THEN chatters_information_discord.chtr_name
-                                ELSE EXCLUDED.chtr_name
-                            END,
-                            xp = (
-                                chatters_information_discord.xp
-                                + EXCLUDED.xp
+                    if records:
+                        await connection.executemany(
+                            """
+                            INSERT INTO chatters_information_discord (
+                                chtr_id,
+                                chtr_name,
+                                xp,
+                                chatstreak
                             )
-                        """,
-                        records,
-                    )
+                            VALUES ($1, $2, $3, 0)
+                            ON CONFLICT (chtr_id)
+                            DO UPDATE SET
+                                chtr_name = CASE
+                                    WHEN EXCLUDED.chtr_name
+                                        = EXCLUDED.chtr_id::TEXT
+                                        THEN chatters_information_discord.chtr_name
+                                    ELSE EXCLUDED.chtr_name
+                                END,
+                                xp = (
+                                    chatters_information_discord.xp
+                                    + EXCLUDED.xp
+                                )
+                            """,
+                            records,
+                        )
 
-            processing_file.unlink()
+                    for discord_id, xp_change in (
+                        deductions_by_user.items()
+                    ):
+                        # No INSERT: a user without a row has no XP to
+                        # lose. GREATEST keeps the XP from going below 0.
+                        updated_id = await connection.fetchval(
+                            """
+                            UPDATE chatters_information_discord
+                            SET xp = GREATEST(xp + $2::BIGINT, 0)
+                            WHERE chtr_id = $1::BIGINT
+                            RETURNING chtr_id
+                            """,
+                            discord_id,
+                            xp_change,
+                        )
+
+                        if updated_id is not None:
+                            deducted_user_ids.add(discord_id)
+
+            changed_user_ids.update(deducted_user_ids)
 
             logger.info(
-                "Imported external XP for %s users. Total XP: %s.",
-                len(xp_by_user),
-                sum(xp_by_user.values()),
+                "Imported external XP for %s users. Total XP: %s. "
+                "Deducted XP from %s of %s users. Total deduction: %s.",
+                len(gains_by_user),
+                sum(gains_by_user.values()),
+                len(deducted_user_ids),
+                len(deductions_by_user),
+                -sum(deductions_by_user.values()),
             )
 
         except Exception:
@@ -1121,9 +1251,15 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             )
             return
 
+        # The XP is saved. A failing delete must not make the file look
+        # "not imported": it would be applied a second time.
+        await self._remove_imported_external_file(processing_file)
+
         if self.config["role_rewards_enabled"]:
+            # A deduction can move a user to a lower rank: the role sync
+            # handles both directions (no notification on the way down).
             await self._update_roles_for_users(
-                set(xp_by_user.keys())
+                changed_user_ids
             )
 
     @commands.Cog.listener()
