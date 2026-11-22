@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import logging
 import random
+import re
 import time
 import os
 import uuid
@@ -26,6 +27,33 @@ MAX_BIGINT = 2 ** 63 - 1
 
 # No XP total comes near this; a bigger deduction means the same: zero.
 MAX_DEDUCTION = 2 ** 62
+
+# XP transfers (an XP theft in the RPG bot), protocol version 1: one request
+# file per theft, settled by Horus in one transaction, answered by a result
+# file. Only "<32 lower-case hex>.json" is a request; the RPG bot's temporary
+# "<id>.json.tmp" and anything else in the folder are ignored.
+XP_TRANSFER_PROTOCOL_VERSION = 1
+XP_TRANSFER_FILE_PATTERN = re.compile(r"[0-9a-f]{32}\.json")
+XP_TRANSFER_DISCORD_ID_PATTERN = re.compile(r"[0-9]{1,20}")
+XP_TRANSFER_REQUESTS_FOLDER_NAME = "xp_transfers"
+XP_TRANSFER_RESULTS_FOLDER_NAME = "xp_transfer_results"
+XP_TRANSFER_REJECTED_FOLDER_NAME = "rejected"
+
+# A request is about 150 bytes. Anything far bigger is garbage (a broken
+# write, a bug) and is rejected without being read whole, so one huge file
+# cannot exhaust the memory or stop the queue.
+XP_TRANSFER_MAX_REQUEST_BYTES = 64 * 1024
+
+# How long a settlement waits for a row lock (the victim's or thief's row
+# held by another session, or the same id claimed by a second Horus) before
+# it gives up until the next pass. Without it a forgotten "BEGIN; SELECT ...
+# FOR UPDATE" would stop the external XP loop for as long as it is held.
+XP_TRANSFER_LOCK_TIMEOUT_MILLISECONDS = 5000
+
+# PostgreSQL error codes the settlement reacts to.
+SQLSTATE_UNDEFINED_TABLE = "42P01"
+SQLSTATE_UNDEFINED_COLUMN = "42703"
+SQLSTATE_LOCK_NOT_AVAILABLE = "55P03"
 
 LEVEL_UP_IMAGE_DIRECTORY = Path(
     r"C:\Programowanie\HorusBot\images\level_up"
@@ -79,6 +107,13 @@ DEFAULT_CONFIG = {
     "external_xp_enabled": True,
     "external_xp_file": "C:\\Programowanie\\AlterMMO-Bot-RPG\\expSummary.json",
     "external_xp_check_interval_seconds": 60,
+
+    # XP transfer folders (XP thefts settled by Horus). None means the
+    # folder next to external_xp_file: "xp_transfers" for the requests,
+    # "xp_transfer_results" for the results. Settled only while
+    # external_xp_enabled is on.
+    "external_xp_transfers_dir": None,
+    "external_xp_transfer_results_dir": None,
 
     "ranks": [
         # ...
@@ -257,6 +292,53 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                     "voice_channel_xp_multipliers values cannot "
                     "be negative."
                 )
+
+        for folder_key in (
+            "external_xp_transfers_dir",
+            "external_xp_transfer_results_dir",
+        ):
+            folder_value = config.get(folder_key)
+
+            if folder_value is not None and (
+                not isinstance(folder_value, str)
+                or not folder_value.strip()
+            ):
+                raise ValueError(
+                    f"{folder_key} must be a folder path or null."
+                )
+
+        (
+            requests_folder,
+            results_folder,
+        ) = DiscordXP._resolve_xp_transfer_folders(config)
+
+        def same_folder(first: Path, second: Path) -> bool:
+            return os.path.normcase(
+                os.path.abspath(first)
+            ) == os.path.normcase(os.path.abspath(second))
+
+        # Results are named like requests ("<id>.json"): in the request
+        # folder (or its rejected folder) Horus would read its own results
+        # as new requests, or overwrite rejected requests with them.
+        if same_folder(requests_folder, results_folder) or same_folder(
+            requests_folder / XP_TRANSFER_REJECTED_FOLDER_NAME,
+            results_folder,
+        ):
+            raise ValueError(
+                "external_xp_transfer_results_dir must not be the "
+                "XP transfer request folder or its rejected folder."
+            )
+
+    async def cog_load(self) -> None:
+        """
+        Create the tables this cog owns when the extension is loaded.
+
+        Never raises: a missing table only stops XP transfers from being
+        settled (the requests wait in their folder); everything else in
+        this cog, the external XP file import included, keeps working.
+        """
+        if self.config["external_xp_enabled"]:
+            await self._ensure_xp_transfer_table()
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
@@ -676,7 +758,7 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 if not self.config["external_xp_enabled"]:
                     continue
 
-                await self.import_external_xp()
+                await self._external_xp_pass()
 
             except asyncio.CancelledError:
                 break
@@ -685,6 +767,32 @@ class DiscordXP(commands.Cog, name="discord_xp"):
                 logger.exception(
                     "Unexpected error in the external XP import loop."
                 )
+
+    async def _external_xp_pass(self) -> None:
+        """
+        One pass of the external XP loop: the summary file, then the XP
+        transfers.
+
+        The summary file goes first so that fight XP the RPG bot wrote
+        before a theft is already saved when the theft is settled. Each
+        part has its own error handling: a broken transfer request never
+        stops the fight XP import, and the other way round. Each part
+        holds external_xp_lock for its whole work, so they never
+        interleave.
+        """
+        try:
+            await self.import_external_xp()
+        except Exception:
+            logger.exception(
+                "Unexpected error while importing the external XP file."
+            )
+
+        try:
+            await self.settle_xp_transfers()
+        except Exception:
+            logger.exception(
+                "Unexpected error while settling XP transfers."
+            )
 
     async def import_external_xp(self) -> None:
         """
@@ -1260,6 +1368,1032 @@ class DiscordXP(commands.Cog, name="discord_xp"):
             # handles both directions (no notification on the way down).
             await self._update_roles_for_users(
                 changed_user_ids
+            )
+
+    # ---------- XP transfers (XP theft), protocol version 1 ----------
+    #
+    # The RPG bot writes one request per theft into the request folder;
+    # Horus moves min(amount, victim's XP) from the victim to the thief in
+    # ONE transaction, writes a result and only then deletes the request.
+    # The table discord_xp_transfers makes it exactly once: its PRIMARY KEY
+    # is the request id, so a request seen again (a crash after the
+    # commit, a file that could not be deleted, a second Horus process, a
+    # copy restored from a backup) never moves XP a second time.
+
+    @staticmethod
+    def _resolve_xp_transfer_folders(
+        config: Dict[str, Any],
+    ) -> Tuple[Path, Path]:
+        """
+        Return the request and result folders of the XP transfers.
+
+        Both default to folders next to external_xp_file (the RPG bot's
+        data folder), so the feature works without new config keys.
+        """
+        data_folder = Path(config["external_xp_file"]).parent
+
+        requests_folder = config.get("external_xp_transfers_dir")
+        results_folder = config.get("external_xp_transfer_results_dir")
+
+        return (
+            Path(requests_folder)
+            if requests_folder
+            else data_folder / XP_TRANSFER_REQUESTS_FOLDER_NAME,
+            Path(results_folder)
+            if results_folder
+            else data_folder / XP_TRANSFER_RESULTS_FOLDER_NAME,
+        )
+
+    def _xp_transfers_awaiting_cleanup(self) -> Dict[str, str]:
+        """
+        Requests whose result this process already wrote but which are
+        still in the request folder: {request_id: "delete" | "reject"}.
+
+        The next pass only retries the delete (or the move into the
+        rejected folder) and does not write the result again: the RPG bot
+        may already have read and removed it, and a second copy would tell
+        the thief about the same theft twice.
+        """
+        awaiting_cleanup = getattr(
+            self,
+            "_xp_transfer_cleanup_by_id",
+            None,
+        )
+
+        if awaiting_cleanup is None:
+            awaiting_cleanup = {}
+            self._xp_transfer_cleanup_by_id = awaiting_cleanup
+
+        return awaiting_cleanup
+
+    def _log_xp_transfer_problem_once(
+        self,
+        problem_key: str,
+        message: str,
+        *args: Any,
+        level: int = logging.WARNING,
+    ) -> None:
+        """
+        Log a problem that would otherwise repeat at every pass (every
+        10 seconds in production) only once per process.
+        """
+        logged_problems = getattr(
+            self,
+            "_xp_transfer_logged_problems",
+            None,
+        )
+
+        if logged_problems is None:
+            logged_problems = set()
+            self._xp_transfer_logged_problems = logged_problems
+
+        if problem_key in logged_problems:
+            return
+
+        logged_problems.add(problem_key)
+        logger.log(level, message, *args, exc_info=True)
+
+    async def _ensure_xp_transfer_table(self) -> bool:
+        """
+        Create discord_xp_transfers when it does not exist yet.
+
+        Idempotent. On failure it returns False and logs once per process;
+        it is tried again (silently) at the next pass that has requests,
+        so a database that was down at start-up does not disable the
+        transfers until a restart.
+        """
+        if getattr(self, "_xp_transfer_table_ready", False):
+            return True
+
+        try:
+            async with self.bot.pg_con.acquire() as connection:
+                await connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS discord_xp_transfers (
+                        transfer_id TEXT PRIMARY KEY,
+                        from_id BIGINT NOT NULL,
+                        to_id BIGINT NOT NULL,
+                        requested BIGINT NOT NULL,
+                        moved BIGINT NOT NULL,
+                        applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        reported_at TIMESTAMPTZ
+                    )
+                    """
+                )
+
+                # reported_at is not in the protocol's column list (the RPG
+                # bot never reads this table). A table created without it
+                # gets it here; ALTER only when it is missing, because ALTER
+                # TABLE locks the table even when there is nothing to do.
+                has_reported_at = await connection.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                            AND table_name = 'discord_xp_transfers'
+                            AND column_name = 'reported_at'
+                    )
+                    """
+                )
+
+                if not has_reported_at:
+                    await connection.execute(
+                        """
+                        ALTER TABLE discord_xp_transfers
+                        ADD COLUMN IF NOT EXISTS reported_at TIMESTAMPTZ
+                        """
+                    )
+
+        except Exception:
+            if not getattr(
+                self,
+                "_xp_transfer_table_failure_logged",
+                False,
+            ):
+                self._xp_transfer_table_failure_logged = True
+                logger.exception(
+                    "Could not create the table discord_xp_transfers. "
+                    "XP transfers are not settled until it exists; the "
+                    "requests wait in their folder. The external XP file "
+                    "import is not affected."
+                )
+            return False
+
+        if getattr(self, "_xp_transfer_table_failure_logged", False):
+            logger.info(
+                "The table discord_xp_transfers is ready now. "
+                "XP transfers are settled again."
+            )
+
+        self._xp_transfer_table_ready = True
+        self._xp_transfer_table_failure_logged = False
+        return True
+
+    def _list_xp_transfer_requests(
+        self,
+        requests_folder: Path,
+    ) -> List[Path]:
+        """
+        Return the request files, oldest first.
+
+        Oldest first because two thefts from one victim depend on the
+        order: the first one takes what is there, the second the rest.
+        A missing folder is simply "nothing to do" and is not logged.
+        """
+        try:
+            with os.scandir(requests_folder) as folder_entries:
+                entries = list(folder_entries)
+        except FileNotFoundError:
+            return []
+        except OSError:
+            self._log_xp_transfer_problem_once(
+                f"scan:{requests_folder}",
+                "Could not read the XP transfer folder %s.",
+                requests_folder,
+            )
+            return []
+
+        sortable_requests = []
+
+        for entry in entries:
+            if not XP_TRANSFER_FILE_PATTERN.fullmatch(entry.name):
+                continue
+
+            try:
+                if not entry.is_file():
+                    continue
+
+                modified_at = entry.stat().st_mtime
+            except OSError:
+                # Gone meanwhile, or not readable yet: the next pass.
+                continue
+
+            sortable_requests.append(
+                (modified_at, entry.name, Path(entry.path))
+            )
+
+        sortable_requests.sort()
+
+        return [
+            request_path
+            for _, _, request_path in sortable_requests
+        ]
+
+    @staticmethod
+    def _parse_xp_transfer_discord_id(
+        raw_discord_id: Any,
+    ) -> Optional[int]:
+        """
+        Return a Discord id given as a string of digits, else None.
+        """
+        if not isinstance(raw_discord_id, str):
+            return None
+
+        if not XP_TRANSFER_DISCORD_ID_PATTERN.fullmatch(raw_discord_id):
+            return None
+
+        discord_id = int(raw_discord_id)
+
+        if discord_id <= 0 or discord_id > MAX_BIGINT:
+            return None
+
+        return discord_id
+
+    @classmethod
+    def _parse_xp_transfer_request(
+        cls,
+        request_id: str,
+        raw_content: bytes,
+    ) -> Tuple[Dict[str, Any], Optional[str]]:
+        """
+        Validate one request file.
+
+        Returns (request, None) for a valid request, or (fields for the
+        error result, short reason) for an invalid one.
+        """
+        result_fields: Dict[str, Any] = {
+            "id": request_id,
+            "from": None,
+            "to": None,
+            "requested": None,
+        }
+
+        if len(raw_content) > XP_TRANSFER_MAX_REQUEST_BYTES:
+            return result_fields, "too large"
+
+        try:
+            # utf-8-sig: a byte order mark written by some editor or tool
+            # must not make a valid request invalid.
+            data = json.loads(raw_content.decode("utf-8-sig"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            # RecursionError: deeply nested brackets ("[[[[..."), which
+            # json.loads does not report as a ValueError.
+            return result_fields, "not JSON"
+
+        if not isinstance(data, dict):
+            return result_fields, "not a JSON object"
+
+        raw_from = data.get("from")
+        raw_to = data.get("to")
+        raw_amount = data.get("amount")
+
+        if isinstance(raw_from, str):
+            result_fields["from"] = raw_from
+
+        if isinstance(raw_to, str):
+            result_fields["to"] = raw_to
+
+        # bool is an int in Python: True must not be an amount of 1.
+        amount_is_integer = (
+            isinstance(raw_amount, int)
+            and not isinstance(raw_amount, bool)
+        )
+
+        if amount_is_integer:
+            result_fields["requested"] = raw_amount
+
+        version = data.get("version")
+
+        if (
+            not isinstance(version, int)
+            or isinstance(version, bool)
+            or version != XP_TRANSFER_PROTOCOL_VERSION
+        ):
+            return result_fields, "unsupported version"
+
+        if data.get("id") != request_id:
+            return result_fields, "id does not match the file name"
+
+        from_id = cls._parse_xp_transfer_discord_id(raw_from)
+
+        if from_id is None:
+            return result_fields, "bad from id"
+
+        to_id = cls._parse_xp_transfer_discord_id(raw_to)
+
+        if to_id is None:
+            return result_fields, "bad to id"
+
+        if from_id == to_id:
+            return result_fields, "from equals to"
+
+        if not amount_is_integer:
+            return result_fields, "bad amount"
+
+        if raw_amount <= 0:
+            return result_fields, "amount must be positive"
+
+        return {
+            "id": request_id,
+            "from_id": from_id,
+            "to_id": to_id,
+            # More than any XP total means the same (everything the victim
+            # has) and always fits the BIGINT columns.
+            "requested": min(raw_amount, MAX_BIGINT),
+        }, None
+
+    @staticmethod
+    def _format_xp_transfer_time(
+        moment: dt.datetime,
+    ) -> str:
+        """
+        UTC ISO-8601 text for the result files.
+        """
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=dt.timezone.utc)
+
+        return moment.astimezone(dt.timezone.utc).isoformat(
+            timespec="seconds"
+        )
+
+    @staticmethod
+    def _write_xp_transfer_result(
+        results_folder: Path,
+        result: Dict[str, Any],
+    ) -> None:
+        """
+        Write "<id>.json" atomically: a temporary file in the same folder,
+        then os.replace. The RPG bot never sees a half-written result.
+
+        The temporary name never matches the request / result pattern and
+        is unique, so two Horus processes cannot write into the same one.
+        Raises OSError when the result cannot be written.
+        """
+        results_folder.mkdir(parents=True, exist_ok=True)
+
+        final_path = results_folder / f"{result['id']}.json"
+        temporary_path = results_folder / (
+            f"{result['id']}.json.{uuid.uuid4().hex}.tmp"
+        )
+
+        try:
+            with temporary_path.open("w", encoding="utf-8") as file:
+                # ensure_ascii: an error result echoes the request's
+                # "from" / "to", which may hold a lone surrogate ("\ud800"
+                # is valid JSON) that cannot be encoded as UTF-8. Escaped,
+                # every string can be written; the JSON reads the same.
+                json.dump(result, file, ensure_ascii=True)
+                file.flush()
+                os.fsync(file.fileno())
+
+            os.replace(temporary_path, final_path)
+
+        except BaseException:
+            try:
+                temporary_path.unlink()
+            except OSError:
+                pass
+            raise
+
+    async def _delete_xp_transfer_request(
+        self,
+        request_path: Path,
+    ) -> bool:
+        """
+        Delete a request whose result is written.
+
+        Retried like the external XP processing file (a backup or an
+        antivirus may hold the file open for a moment). A request that
+        still cannot be deleted stays in _xp_transfers_awaiting_cleanup:
+        it is never settled again anyway (the table knows it), and its
+        result is not written again.
+        """
+        for attempt in range(5):
+            try:
+                request_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                if attempt < 4:
+                    await asyncio.sleep(0.2)
+                    continue
+
+                self._log_xp_transfer_problem_once(
+                    f"delete:{request_path}",
+                    "The XP transfer %s is settled and its result written, "
+                    "but the request could not be removed. It is not "
+                    "settled again; the delete is retried.",
+                    request_path,
+                )
+                return False
+
+            return True
+
+        return False
+
+    async def _reject_xp_transfer_request(
+        self,
+        request_path: Path,
+        result_fields: Dict[str, Any],
+        reason: str,
+        results_folder: Path,
+    ) -> None:
+        """
+        Answer an invalid request with an error result and move it into
+        the rejected folder, so that it is not retried for ever.
+
+        Nothing is applied. The error result comes first: when it cannot be
+        written the request stays where it is and is answered later.
+        """
+        request_id = result_fields["id"]
+        awaiting_cleanup = self._xp_transfers_awaiting_cleanup()
+
+        if awaiting_cleanup.get(request_id) != "reject":
+            error_result = {
+                "version": XP_TRANSFER_PROTOCOL_VERSION,
+                "id": request_id,
+                "from": result_fields["from"],
+                "to": result_fields["to"],
+                "requested": result_fields["requested"],
+                "moved": 0,
+                "applied": self._format_xp_transfer_time(
+                    dt.datetime.now(dt.timezone.utc)
+                ),
+                "error": reason,
+            }
+
+            try:
+                self._write_xp_transfer_result(
+                    results_folder,
+                    error_result,
+                )
+            except OSError:
+                self._log_xp_transfer_problem_once(
+                    f"result:{request_id}",
+                    "Could not write the error result of the rejected XP "
+                    "transfer %s. The request stays for the next pass.",
+                    request_id,
+                )
+                return
+
+            awaiting_cleanup[request_id] = "reject"
+
+            logger.warning(
+                "Rejected XP transfer request %s: %s.",
+                request_path,
+                reason,
+            )
+
+        rejected_folder = (
+            request_path.parent / XP_TRANSFER_REJECTED_FOLDER_NAME
+        )
+
+        try:
+            rejected_folder.mkdir(parents=True, exist_ok=True)
+            os.replace(
+                request_path,
+                rejected_folder / request_path.name,
+            )
+        except FileNotFoundError:
+            pass
+        except OSError:
+            self._log_xp_transfer_problem_once(
+                f"reject:{request_path}",
+                "Could not move the rejected XP transfer request %s into "
+                "%s. The move is retried.",
+                request_path,
+                rejected_folder,
+            )
+            return
+
+        awaiting_cleanup.pop(request_id, None)
+
+    async def settle_xp_transfers(self) -> None:
+        """
+        Settle the XP transfer requests written by the RPG bot.
+
+        Holds external_xp_lock, so a settlement never interleaves with the
+        import of the external XP file. The XP roles are synchronised after
+        the lock is released: Discord calls must not hold up the next
+        import, and a role failure must not touch a finished settlement.
+        """
+        async with self.external_xp_lock:
+            changed_user_ids = await self._settle_xp_transfer_requests()
+
+        if not changed_user_ids:
+            return
+
+        if not self.config["role_rewards_enabled"]:
+            return
+
+        try:
+            # A theft can move the victim down a rank and the thief up:
+            # the role sync handles both directions.
+            await self._update_roles_for_users(changed_user_ids)
+        except Exception:
+            logger.exception(
+                "XP transfers were settled, but the XP roles of %s "
+                "could not be updated.",
+                sorted(changed_user_ids),
+            )
+
+    async def _settle_xp_transfer_requests(self) -> set:
+        """
+        One pass over the request folder. Returns the users whose XP
+        changed. Must be called with external_xp_lock held.
+        """
+        requests_folder, results_folder = (
+            self._resolve_xp_transfer_folders(self.config)
+        )
+
+        request_paths = self._list_xp_transfer_requests(requests_folder)
+
+        if not request_paths:
+            return set()
+
+        valid_requests = []
+
+        for request_path in request_paths:
+            try:
+                request = await self._read_xp_transfer_request(
+                    request_path,
+                    results_folder,
+                )
+            except Exception:
+                # Whatever one strange file does, the requests after it
+                # are still settled. The file stays and is tried again;
+                # logged once, not at every pass.
+                self._log_xp_transfer_problem_once(
+                    f"request:{request_path}",
+                    "Unexpected error while reading the XP transfer "
+                    "request %s. It is skipped and tried again at the "
+                    "next pass.",
+                    request_path,
+                    level=logging.ERROR,
+                )
+                continue
+
+            if request is not None:
+                valid_requests.append(request)
+
+        if not valid_requests:
+            return set()
+
+        if not await self._ensure_xp_transfer_table():
+            return set()
+
+        # XP earned in chat is kept in memory for a few minutes before it
+        # is saved. Save it first: the victim's unsaved XP can then be
+        # taken, and it does not come back on top of the theft later.
+        try:
+            await self.flush_pending_xp()
+        except Exception:
+            logger.exception(
+                "Could not save pending XP before settling XP transfers. "
+                "They are settled against the saved XP."
+            )
+
+        changed_user_ids = set()
+
+        for request in valid_requests:
+            try:
+                changed_user_ids.update(
+                    await self._settle_xp_transfer(
+                        request,
+                        results_folder,
+                    )
+                )
+            except Exception as error:
+                # Nothing is deleted: the request is tried again at the
+                # next pass, and the table keeps a commit from being
+                # applied twice.
+                sqlstate = getattr(error, "sqlstate", None)
+
+                if sqlstate == SQLSTATE_LOCK_NOT_AVAILABLE:
+                    # A row is held by another session. The requests after
+                    # this one wait as well: they may take from the same
+                    # victim, and the oldest must be settled first.
+                    self._log_xp_transfer_problem_once(
+                        f"lock:{request['id']}",
+                        "The XP transfer %s waits for a row lock held by "
+                        "another database session. It and the requests "
+                        "after it are tried again at the next pass.",
+                        request["id"],
+                    )
+                    break
+
+                self._log_xp_transfer_problem_once(
+                    f"settle:{request['id']}:{sqlstate or type(error).__name__}",
+                    "Could not settle the XP transfer %s. "
+                    "The request was preserved for retry.",
+                    request["id"],
+                    level=logging.ERROR,
+                )
+
+                if sqlstate in (
+                    SQLSTATE_UNDEFINED_TABLE,
+                    SQLSTATE_UNDEFINED_COLUMN,
+                ):
+                    # The table vanished while Horus runs (a database
+                    # restored from an older backup): create it again at
+                    # the next pass. Every other request would fail the
+                    # same way now, so they wait for that pass too.
+                    self._xp_transfer_table_ready = False
+                    break
+
+        return changed_user_ids
+
+    async def _read_xp_transfer_request(
+        self,
+        request_path: Path,
+        results_folder: Path,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Read and validate one request file.
+
+        Returns the valid request, or None when there is nothing to settle
+        now (only a delete was due, the file is gone or not readable yet,
+        or it was invalid and is rejected here).
+        """
+        request_id = request_path.name[: -len(".json")]
+        awaiting_cleanup = self._xp_transfers_awaiting_cleanup()
+
+        if awaiting_cleanup.get(request_id) == "delete":
+            # Settled and answered by this process; only the delete
+            # failed. Never settle or answer it again.
+            if await self._delete_xp_transfer_request(request_path):
+                awaiting_cleanup.pop(request_id, None)
+            return None
+
+        try:
+            # One byte over the limit is enough to know it is too large;
+            # the rest is never read.
+            with request_path.open("rb") as request_file:
+                raw_content = request_file.read(
+                    XP_TRANSFER_MAX_REQUEST_BYTES + 1
+                )
+        except FileNotFoundError:
+            return None
+        except OSError:
+            self._log_xp_transfer_problem_once(
+                f"read:{request_path}",
+                "Could not read the XP transfer request %s. "
+                "It is tried again at the next pass.",
+                request_path,
+            )
+            return None
+
+        request, reason = self._parse_xp_transfer_request(
+            request_id,
+            raw_content,
+        )
+
+        if reason is not None:
+            await self._reject_xp_transfer_request(
+                request_path,
+                request,
+                reason,
+                results_folder,
+            )
+            return None
+
+        request["path"] = request_path
+        return request
+
+    async def _settle_xp_transfer(
+        self,
+        request: Dict[str, Any],
+        results_folder: Path,
+    ) -> set:
+        """
+        Settle one valid request, answer it and remove it.
+
+        Returns the users whose XP changed (for the role sync).
+        """
+        request_id = request["id"]
+        request_path = request["path"]
+
+        settlement = await self._apply_xp_transfer_in_database(request)
+
+        changed_user_ids = set()
+
+        if settlement["newly_settled"]:
+            logger.info(
+                "Settled XP transfer %s: from %s to %s, requested %s, "
+                "moved %s.",
+                request_id,
+                settlement["from_id"],
+                settlement["to_id"],
+                settlement["requested"],
+                settlement["moved"],
+            )
+
+            if settlement["moved"] > 0:
+                changed_user_ids = {
+                    settlement["from_id"],
+                    settlement["to_id"],
+                }
+
+        else:
+            if (
+                settlement["from_id"] != request["from_id"]
+                or settlement["to_id"] != request["to_id"]
+                or settlement["requested"] != request["requested"]
+            ):
+                logger.warning(
+                    "The XP transfer request %s differs from the transfer "
+                    "already settled under this id. Nothing is applied; "
+                    "the settled transfer stands.",
+                    request_id,
+                )
+
+            if settlement["reported"]:
+                # Answered and removed before (a copy restored from a
+                # backup, or a request that could not be deleted before a
+                # restart). The RPG bot has its result already.
+                logger.info(
+                    "XP transfer %s was settled and answered before. "
+                    "The repeated request is removed.",
+                    request_id,
+                )
+                await self._delete_xp_transfer_request(request_path)
+                return changed_user_ids
+
+            if not request_path.exists():
+                # Another Horus process finished it meanwhile.
+                return changed_user_ids
+
+            logger.info(
+                "XP transfer %s was settled before but not answered. "
+                "Writing its result again.",
+                request_id,
+            )
+
+        result = {
+            "version": XP_TRANSFER_PROTOCOL_VERSION,
+            "id": request_id,
+            "from": str(settlement["from_id"]),
+            "to": str(settlement["to_id"]),
+            "requested": settlement["requested"],
+            "moved": settlement["moved"],
+            "applied": self._format_xp_transfer_time(
+                settlement["applied_at"]
+            ),
+        }
+
+        try:
+            self._write_xp_transfer_result(results_folder, result)
+        except OSError:
+            # The XP is moved; the request stays, so the result is written
+            # at a later pass (the table keeps it from being applied again).
+            self._log_xp_transfer_problem_once(
+                f"result:{request_id}",
+                "The XP transfer %s is settled, but its result could not "
+                "be written. The request stays for the next pass.",
+                request_id,
+            )
+            return changed_user_ids
+
+        awaiting_cleanup = self._xp_transfers_awaiting_cleanup()
+        awaiting_cleanup[request_id] = "delete"
+
+        await self._mark_xp_transfer_reported(request_id)
+
+        if await self._delete_xp_transfer_request(request_path):
+            awaiting_cleanup.pop(request_id, None)
+
+        return changed_user_ids
+
+    async def _apply_xp_transfer_in_database(
+        self,
+        request: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Claim and apply one transfer in ONE transaction.
+        """
+        guild = self.bot.get_guild(
+            int(self.config["guild_id"])
+        )
+
+        member = (
+            guild.get_member(request["to_id"])
+            if guild is not None
+            else None
+        )
+
+        thief_name = (
+            member.name
+            if member is not None
+            else str(request["to_id"])
+        )
+
+        async with self.bot.pg_con.acquire() as connection:
+            async with connection.transaction():
+                # LOCAL: only this transaction; the pooled connection goes
+                # back with its normal setting. A lock that is not free in
+                # time raises LockNotAvailableError, the transaction rolls
+                # back and the request waits for the next pass, so the
+                # loop (and the summary-file import) goes on.
+                await connection.execute(
+                    "SET LOCAL lock_timeout = "
+                    f"{int(XP_TRANSFER_LOCK_TIMEOUT_MILLISECONDS)}"
+                )
+
+                return await self._apply_xp_transfer(
+                    connection,
+                    request,
+                    thief_name,
+                )
+
+    async def _claim_xp_transfer(
+        self,
+        connection,
+        request: Dict[str, Any],
+    ) -> Optional[dt.datetime]:
+        """
+        Insert the transfer id. Returns applied_at, or None when the id is
+        already there (settled before, or by another Horus process: its
+        insert makes this one wait until it commits or rolls back).
+        """
+        return await connection.fetchval(
+            """
+            INSERT INTO discord_xp_transfers (
+                transfer_id,
+                from_id,
+                to_id,
+                requested,
+                moved
+            )
+            VALUES ($1, $2, $3, $4, 0)
+            ON CONFLICT (transfer_id) DO NOTHING
+            RETURNING applied_at
+            """,
+            request["id"],
+            request["from_id"],
+            request["to_id"],
+            request["requested"],
+        )
+
+    async def _apply_xp_transfer(
+        self,
+        connection,
+        request: Dict[str, Any],
+        thief_name: str,
+    ) -> Dict[str, Any]:
+        """
+        The body of the settlement transaction.
+        """
+        applied_at = await self._claim_xp_transfer(connection, request)
+
+        if applied_at is None:
+            stored = await connection.fetchrow(
+                """
+                SELECT
+                    from_id,
+                    to_id,
+                    requested,
+                    moved,
+                    applied_at,
+                    reported_at
+                FROM discord_xp_transfers
+                WHERE transfer_id = $1
+                """,
+                request["id"],
+            )
+
+            if stored is None:
+                raise RuntimeError(
+                    f"XP transfer {request['id']} conflicts, "
+                    "but its row is missing."
+                )
+
+            return {
+                "newly_settled": False,
+                "reported": stored["reported_at"] is not None,
+                "from_id": int(stored["from_id"]),
+                "to_id": int(stored["to_id"]),
+                "requested": int(stored["requested"]),
+                "moved": int(stored["moved"]),
+                "applied_at": stored["applied_at"],
+            }
+
+        from_id = request["from_id"]
+        to_id = request["to_id"]
+
+        # Both rows locked, always in the same order (two transfers in
+        # opposite directions must not deadlock). The thief may have no
+        # row yet: there is nothing to lock then.
+        locked_rows = await connection.fetch(
+            """
+            SELECT
+                chtr_id,
+                xp
+            FROM chatters_information_discord
+            WHERE chtr_id = ANY($1::BIGINT[])
+            ORDER BY chtr_id
+            FOR UPDATE
+            """,
+            [from_id, to_id],
+        )
+
+        xp_by_user = {
+            int(row["chtr_id"]): int(row["xp"])
+            for row in locked_rows
+        }
+
+        victim_xp = xp_by_user.get(from_id)
+        moved = 0
+
+        if victim_xp is not None and victim_xp > 0:
+            thief_xp = max(xp_by_user.get(to_id, 0), 0)
+
+            # The thief gets exactly what the victim loses. The last term
+            # keeps the thief's total inside BIGINT: without it a failing
+            # UPDATE would block this request for ever.
+            moved = min(
+                request["requested"],
+                victim_xp,
+                MAX_BIGINT - thief_xp,
+            )
+
+        if moved > 0:
+            await connection.execute(
+                """
+                UPDATE chatters_information_discord
+                SET xp = xp - $2::BIGINT
+                WHERE chtr_id = $1::BIGINT
+                """,
+                from_id,
+                moved,
+            )
+
+            # Like the external XP gain: a thief without a row gets one;
+            # a stored name is not replaced by the bare id.
+            await connection.execute(
+                """
+                INSERT INTO chatters_information_discord (
+                    chtr_id,
+                    chtr_name,
+                    xp,
+                    chatstreak
+                )
+                VALUES ($1, $2, $3, 0)
+                ON CONFLICT (chtr_id)
+                DO UPDATE SET
+                    chtr_name = CASE
+                        WHEN EXCLUDED.chtr_name
+                            = EXCLUDED.chtr_id::TEXT
+                            THEN chatters_information_discord.chtr_name
+                        ELSE EXCLUDED.chtr_name
+                    END,
+                    xp = (
+                        chatters_information_discord.xp
+                        + EXCLUDED.xp
+                    )
+                """,
+                to_id,
+                thief_name,
+                moved,
+            )
+
+            await connection.execute(
+                """
+                UPDATE discord_xp_transfers
+                SET moved = $2::BIGINT
+                WHERE transfer_id = $1
+                """,
+                request["id"],
+                moved,
+            )
+
+        return {
+            "newly_settled": True,
+            "reported": False,
+            "from_id": from_id,
+            "to_id": to_id,
+            "requested": request["requested"],
+            "moved": moved,
+            "applied_at": applied_at,
+        }
+
+    async def _mark_xp_transfer_reported(
+        self,
+        request_id: str,
+    ) -> None:
+        """
+        Remember in the table that the result was written.
+
+        A request seen again after that (a copy restored from a backup,
+        or one that could not be deleted before a restart) is then only
+        removed, not answered a second time. A failure here is harmless:
+        at worst the result is written once more.
+        """
+        try:
+            await self.bot.pg_con.execute(
+                """
+                UPDATE discord_xp_transfers
+                SET reported_at = now()
+                WHERE transfer_id = $1
+                    AND reported_at IS NULL
+                """,
+                request_id,
+            )
+        except Exception:
+            self._log_xp_transfer_problem_once(
+                f"report:{request_id}",
+                "Could not mark the XP transfer %s as answered.",
+                request_id,
             )
 
     @commands.Cog.listener()
@@ -2492,9 +3626,11 @@ class DiscordXP(commands.Cog, name="discord_xp"):
         ctx: commands.Context,
     ) -> None:
         """
-        Manually import XP from the external JSON file.
+        Manually import XP from the external JSON file and settle the
+        waiting XP transfers.
         """
         await self.import_external_xp()
+        await self.settle_xp_transfers()
 
         await ctx.send(
             "Zakończono próbę importu zewnętrznego XP."
