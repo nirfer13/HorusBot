@@ -55,7 +55,8 @@ logger = logging.getLogger(__name__)
 
 SYNC_MINUTES = 10
 
-TWITCH_LINK = "[Twitchu](<https://www.twitch.tv/altermmo_pl>)"
+# The add-on page, so a reader can download SkyDead (was the Twitch channel until 2026-11-24).
+CURSEFORGE_LINK = "[CurseForge](<https://www.curseforge.com/wow/addons/skydead-altermmo>)"
 
 # {"roles": {"1": role_id, ...}, "announced": {twitch_login: threshold}}
 STATE_FILE = "skydead_ranks.json"
@@ -566,21 +567,21 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
 
     def _wowiarz_line(self, discord_id: int, mask: int) -> str:
         return (f"🍺 <@{discord_id}> zdobywa rangę **{self.achv_rank_name}** za **{popcount(mask)}/8** osiągnięć "
-                f"w WoW (SkyDead na {TWITCH_LINK})!")
+                f"w WoW (SkyDead na {CURSEFORGE_LINK})!")
 
     def _wowiarz_unlinked_line(self, login: str, mask: int) -> str:
         name = discord.utils.escape_markdown(login)
-        return (f"🍺 **{name}** ma już **{popcount(mask)}/8** osiągnięć w WoW (SkyDead na {TWITCH_LINK})! Aby dostać "
+        return (f"🍺 **{name}** ma już **{popcount(mask)}/8** osiągnięć w WoW (SkyDead na {CURSEFORGE_LINK})! Aby dostać "
                 f"rangę **{self.achv_rank_name}** na Discordzie, połącz konto komendą `!polacz <ID Discorda>` "
                 f"na czacie Twitcha.")
 
     def _hardcore_line(self, discord_id: int, mask: int) -> str:
         return (f"💀 <@{discord_id}> zdobywa rangę **{self.hardcore_name}** - 60 poziom w WoW bez ani jednej śmierci "
-                f"(SkyDead na {TWITCH_LINK})!")
+                f"(SkyDead na {CURSEFORGE_LINK})!")
 
     def _hardcore_unlinked_line(self, login: str, mask: int) -> str:
         name = discord.utils.escape_markdown(login)
-        return (f"💀 **{name}** doszedł do 60 poziomu w WoW bez śmierci (SkyDead na {TWITCH_LINK})! Aby dostać "
+        return (f"💀 **{name}** doszedł do 60 poziomu w WoW bez śmierci (SkyDead na {CURSEFORGE_LINK})! Aby dostać "
                 f"rangę **{self.hardcore_name}** na Discordzie, połącz konto komendą `!polacz <ID Discorda>` "
                 f"na czacie Twitcha.")
 
@@ -596,11 +597,11 @@ class SkyDeadRanks(commands.Cog, name="SkyDeadRanks"):
 
     def _linked_line(self, discord_id: int, rank_name: str, h: Hunter) -> str:
         return (f"⚔️ <@{discord_id}> zdobywa rangę **{rank_name}** za **{self._kills_text(h.kills)}** "
-                f"Skyborne w WoW (SkyDead na {TWITCH_LINK})!")
+                f"Skyborne w WoW (SkyDead na {CURSEFORGE_LINK})!")
 
     def _unlinked_line(self, rank_name: str, h: Hunter) -> str:
         name = discord.utils.escape_markdown(h.login)
-        return (f"⚔️ **{name}** ma już **{self._kills_text(h.kills)}** Skyborne w WoW (SkyDead na {TWITCH_LINK})! "
+        return (f"⚔️ **{name}** ma już **{self._kills_text(h.kills)}** Skyborne w WoW (SkyDead na {CURSEFORGE_LINK})! "
                 f"Aby dostać rangę **{rank_name}** na Discordzie, połącz konto komendą "
                 f"`!polacz <ID Discorda>` na czacie Twitcha.")
 
